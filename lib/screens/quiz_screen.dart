@@ -213,8 +213,10 @@ class _QuizScreenState extends State<QuizScreen> {
                             children: [
                               const FlowOrb(size: 16),
                               const SizedBox(width: 6),
-                              SfEyebrow('Explanation',
-                                  tracking: 1, color: scheme.primary),
+                              Flexible(
+                                child: SfEyebrow('Explanation',
+                                    tracking: 1, color: scheme.primary),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 8),

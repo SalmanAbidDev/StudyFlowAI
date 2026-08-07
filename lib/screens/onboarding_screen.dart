@@ -290,8 +290,10 @@ class _ArtSummaries extends StatelessWidget {
                     children: [
                       const FlowOrb(size: 16),
                       const SizedBox(width: 6),
-                      SfEyebrow('Summary',
-                          size: 11, color: scheme.primary, tracking: 0.5),
+                      Flexible(
+                        child: SfEyebrow('Summary',
+                            size: 11, color: scheme.primary, tracking: 0.5),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),

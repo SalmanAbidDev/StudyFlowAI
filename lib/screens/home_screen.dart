@@ -483,11 +483,13 @@ class _StreakHero extends StatelessWidget {
                               Icon(Icons.local_fire_department_rounded,
                                   size: 15, color: sf.streak),
                               const SizedBox(width: 6),
-                              SfEyebrow(
-                                'Streak',
-                                size: 10,
-                                tracking: 1,
-                                color: Colors.white.withValues(alpha: 0.7),
+                              Flexible(
+                                child: SfEyebrow(
+                                  'Streak',
+                                  size: 10,
+                                  tracking: 1,
+                                  color: Colors.white.withValues(alpha: 0.7),
+                                ),
                               ),
                             ],
                           ),
@@ -739,7 +741,9 @@ class _NextExamCard extends StatelessWidget {
             children: [
               Icon(Icons.my_location_rounded, size: 14, color: sf.coral),
               const SizedBox(width: 6),
-              SfEyebrow('Next exam', size: 10, color: sf.coralInk),
+              Flexible(
+                child: SfEyebrow('Next exam', size: 10, color: sf.coralInk),
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -790,8 +794,10 @@ class _FlowSuggestionCard extends StatelessWidget {
             children: [
               const FlowOrb(size: 14),
               const SizedBox(width: 6),
-              SfEyebrow('Flow suggests',
-                  size: 10, color: context.scheme.primary),
+              Flexible(
+                child: SfEyebrow('Flow suggests',
+                    size: 10, color: context.scheme.primary),
+              ),
             ],
           ),
           const SizedBox(height: 10),

@@ -551,14 +551,25 @@ class SfEyebrow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text.toUpperCase(),
-      style: TextStyle(
-        fontFamily: AppTextStyles.fontMono,
-        fontSize: size,
-        fontWeight: FontWeight.w700,
-        letterSpacing: tracking,
-        color: color ?? context.sf.ink3,
+    // Uppercasing plus the wide tracking makes this label measurably wider
+    // than its source string suggests, and it usually sits next to an icon in
+    // a fixed-width card. Scaling down within a bounded slot keeps the whole
+    // word — ellipsing a two-word label to fit a fraction of a pixel reads
+    // like a bug. Under unbounded width (the common case) this is a no-op.
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: AlignmentDirectional.centerStart,
+      child: Text(
+        text.toUpperCase(),
+        maxLines: 1,
+        softWrap: false,
+        style: TextStyle(
+          fontFamily: AppTextStyles.fontMono,
+          fontSize: size,
+          fontWeight: FontWeight.w700,
+          letterSpacing: tracking,
+          color: color ?? context.sf.ink3,
+        ),
       ),
     );
   }

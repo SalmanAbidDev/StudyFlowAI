@@ -133,11 +133,13 @@ class _FeaturedExam extends StatelessWidget {
                     const Icon(Icons.my_location_rounded,
                         size: 14, color: Colors.white),
                     const SizedBox(width: 6),
-                    SfEyebrow(
-                      'High priority',
-                      size: 10,
-                      tracking: 1,
-                      color: Colors.white.withValues(alpha: 0.9),
+                    Flexible(
+                      child: SfEyebrow(
+                        'High priority',
+                        size: 10,
+                        tracking: 1,
+                        color: Colors.white.withValues(alpha: 0.9),
+                      ),
                     ),
                   ],
                 ),

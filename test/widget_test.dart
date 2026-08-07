@@ -25,11 +25,16 @@ import 'package:ai_study_helper/widgets/widgets.dart';
 
 /// Give every test an iPhone-sized surface — these are phone layouts, and the
 /// default 800x600 test window is the wrong shape for them.
-void _usePhoneSurface(WidgetTester tester) {
+void _usePhoneSurface(WidgetTester tester, {Size size = const Size(390, 844)}) {
   tester.view.devicePixelRatio = 1.0;
-  tester.view.physicalSize = const Size(390, 844);
+  tester.view.physicalSize = size;
   addTearDown(tester.view.reset);
 }
+
+/// A small Android phone. Plenty of devices report a width in the 340–360dp
+/// range, and side-by-side cards get proportionally narrower there — which is
+/// where labels sized against a 390dp reference start to overflow.
+const _narrowPhone = Size(340, 760);
 
 /// Advance a fixed number of frames — enough for a route transition to finish.
 Future<void> _settle(WidgetTester tester) async {
@@ -216,10 +221,10 @@ void main() {
       }
     }
 
-    // Text-driven heights are the main source of overflow: the test font's
-    // metrics are not the device's, so a strip height that "just fits" here
-    // can still clip on hardware. Re-render at a larger scale to flush out
-    // anything that hard-codes room for text.
+    // Text-driven sizing is the main source of overflow: the test font's
+    // metrics are not the device's, so a box that "just fits" here can still
+    // clip on hardware. Re-render at larger text scales, and on a narrower
+    // phone, to flush out anything that hard-codes room for text.
     for (final scale in [1.15, 1.3]) {
       for (final entry in screens.entries) {
         testWidgets('${entry.key} · textScale $scale', (tester) async {
@@ -239,6 +244,17 @@ void main() {
           expect(tester.takeException(), isNull);
         });
       }
+    }
+
+    for (final entry in screens.entries) {
+      testWidgets('${entry.key} · narrow phone', (tester) async {
+        _usePhoneSurface(tester, size: _narrowPhone);
+        await tester.pumpWidget(
+          MaterialApp(theme: AppTheme.light, home: entry.value()),
+        );
+        await _settle(tester);
+        expect(tester.takeException(), isNull);
+      });
     }
   });
 }

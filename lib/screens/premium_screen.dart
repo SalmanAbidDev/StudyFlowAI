@@ -435,8 +435,10 @@ class _Hero extends StatelessWidget {
                         children: [
                           Icon(Icons.star_rounded, size: 13, color: sf.streak),
                           const SizedBox(width: 6),
-                          const SfEyebrow('StudyFlow Pro',
-                              tracking: 1, color: Colors.white),
+                          const Flexible(
+                            child: SfEyebrow('StudyFlow Pro',
+                                tracking: 1, color: Colors.white),
+                          ),
                         ],
                       ),
                     ),
