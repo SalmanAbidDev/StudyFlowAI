@@ -8,6 +8,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
+import '../../data/models/study_block.dart';
+import '../../data/models/study_material.dart';
+import '../../data/models/subject.dart';
+import '../materials/materials_view_model.dart';
+import '../planner/planner_view_model.dart';
+import '../summaries/summaries_view_model.dart';
 import '../chat/chat_screen.dart';
 import '../flashcards/flashcards_screen.dart';
 import '../quiz/quiz_screen.dart';
@@ -23,7 +29,20 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
 
-    return ListView(
+    // Home is the first screen a new account lands on, so it is where the
+    // starter library gets created. The database function is idempotent, so
+    // returning users pay one no-op call.
+    ref.watch(starterContentProvider);
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        ref
+          ..invalidate(profileProvider)
+          ..invalidate(todayBlocksProvider)
+          ..invalidate(resumeMaterialProvider)
+          ..invalidate(upcomingExamsProvider);
+      },
+      child: ListView(
       padding: EdgeInsets.only(
         top: 14,
         bottom: sfNavContentInset(context),
@@ -123,43 +142,33 @@ class HomeScreen extends ConsumerWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-              for (final d in <({String title, String meta, Color color, IconData icon})>[
-                (
-                  title: 'Stereochem.pdf',
-                  meta: '12 pages',
-                  color: sf.coral,
-                  icon: Icons.science_outlined
-                ),
-                (
-                  title: 'Macro lec 7',
-                  meta: '8 pages',
-                  color: context.scheme.primary,
-                  icon: Icons.show_chart_rounded
-                ),
-                (
-                  title: 'Linear Alg',
-                  meta: '24 pages',
-                  color: sf.emerald,
-                  icon: Icons.menu_book_outlined
-                ),
-              ])
+              // The five most recent documents; the rail scrolls, so a longer
+              // library just means more to swipe through.
+              for (final d in (ref.watch(materialsProvider).value ??
+                      const <StudyMaterial>[])
+                  .take(5))
                 Padding(
                   padding: const EdgeInsets.only(right: 10),
                   child: SizedBox(
                     width: 140,
                     child: SfCard(
                       padding: const EdgeInsets.all(14),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                            builder: (_) => const SummariesScreen()),
-                      ),
+                      onTap: () {
+                        ref
+                            .read(selectedMaterialProvider.notifier)
+                            .update(d.id);
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const SummariesScreen()),
+                        );
+                      },
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           SoftIconTile(
                             icon: d.icon,
-                            color: d.color,
+                            color: d.accent.color(context),
                             width: 36,
                             height: 44,
                             radius: 8,
@@ -193,13 +202,32 @@ class HomeScreen extends ConsumerWidget {
           ),
         ),
       ],
+      ),
     );
   }
 
   // ── Greeting ───────────────────────────────────────────────────────────
 
+  static const _weekdays = [
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+    'Sunday',
+  ];
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  static String _partOfDay(int hour) {
+    if (hour < 12) return 'Morning';
+    if (hour < 18) return 'Afternoon';
+    return 'Evening';
+  }
+
   Widget _greeting(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
+    final profile = ref.watch(profileProvider).value;
+    final now = DateTime.now();
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 22),
       child: Row(
@@ -210,7 +238,8 @@ class HomeScreen extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Tuesday, May 6',
+                  '${_weekdays[now.weekday - 1]}, '
+                  '${_months[now.month - 1]} ${now.day}',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
@@ -219,7 +248,11 @@ class HomeScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Morning, Alex 👋',
+                  // Falls back to a name-less greeting rather than flashing a
+                  // placeholder while the profile row loads.
+                  profile == null
+                      ? '${_partOfDay(now.hour)} 👋'
+                      : '${_partOfDay(now.hour)}, ${profile.firstName} 👋',
                   style: AppTextStyles.heading.copyWith(
                     fontSize: 26,
                     letterSpacing: -0.8,
@@ -239,7 +272,7 @@ class HomeScreen extends ConsumerWidget {
           GestureDetector(
             onTap: () =>
                 ref.read(shellPageProvider.notifier).go(ShellPage.profile),
-            child: SfAvatar(initials: 'AM', size: 40),
+            child: SfAvatar(initials: profile?.initials ?? '·', size: 40),
           ),
         ],
       ),
@@ -340,20 +373,23 @@ class HomeScreen extends ConsumerWidget {
 
   List<Widget> _tasks(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
-    final done = ref.watch(completedTasksProvider);
-    final rows = <({String title, String meta, Color color})>[
-      (
-        title: 'Review macro flashcards',
-        meta: '20 cards · 15m',
-        color: sf.emerald
-      ),
-      (
-        title: 'Read Ch.4 stereochemistry',
-        meta: '11:00 AM · 45m',
-        color: context.scheme.primary
-      ),
-      (title: 'Practice MCAT bio quiz', meta: '3:30 PM · 1h', color: sf.coral),
-    ];
+    final today = ref.watch(todayBlocksProvider);
+    final rows = today.value ?? const <StudyBlock>[];
+
+    if (today.isLoading) {
+      return const [SfLoadingList(rows: 3, height: 64, padding: EdgeInsets.zero)];
+    }
+    if (rows.isEmpty) {
+      return [
+        SfCard(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+          child: Text(
+            'Nothing scheduled today. Add a block in the Planner.',
+            style: TextStyle(fontSize: 13, color: sf.ink3),
+          ),
+        ),
+      ];
+    }
 
     return [
       for (var i = 0; i < rows.length; i++)
@@ -361,10 +397,13 @@ class HomeScreen extends ConsumerWidget {
           padding: const EdgeInsets.only(bottom: 8),
           child: SfCard(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            onTap: () => ref.read(completedTasksProvider.notifier).toggle(i),
+            onTap: () => ref.read(toggleBlockDoneProvider)(rows[i]),
             child: Row(
               children: [
-                _Checkbox(checked: done.contains(i), color: rows[i].color),
+                _Checkbox(
+                  checked: rows[i].done,
+                  color: rows[i].accent.color(context),
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -375,16 +414,20 @@ class HomeScreen extends ConsumerWidget {
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
-                          color: done.contains(i) ? sf.ink3 : sf.ink,
-                          decoration: done.contains(i)
+                          color: rows[i].done ? sf.ink3 : sf.ink,
+                          decoration: rows[i].done
                               ? TextDecoration.lineThrough
                               : null,
                           decorationColor: sf.ink3,
                         ),
                       ),
                       const SizedBox(height: 2),
-                      Text(rows[i].meta,
-                          style: TextStyle(fontSize: 11, color: sf.ink3)),
+                      Text(
+                        [rows[i].window, rows[i].duration]
+                            .where((s) => s.isNotEmpty)
+                            .join(' · '),
+                        style: TextStyle(fontSize: 11, color: sf.ink3),
+                      ),
                     ],
                   ),
                 ),
@@ -392,7 +435,7 @@ class HomeScreen extends ConsumerWidget {
                   width: 4,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: rows[i].color,
+                    color: rows[i].accent.color(context),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -433,12 +476,17 @@ class _Checkbox extends StatelessWidget {
 
 // ─── Streak hero ──────────────────────────────────────────────────────────
 
-class _StreakHero extends StatelessWidget {
+class _StreakHero extends ConsumerWidget {
   const _StreakHero();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
+    final streak = ref.watch(profileProvider).value?.streakDays ?? 0;
+    // Today's plan is the ring: how much of what you scheduled is done.
+    final blocks = ref.watch(todayBlocksProvider).value ?? const [];
+    final done = blocks.where((b) => b.done).length;
+    final ratio = blocks.isEmpty ? 0.0 : done / blocks.length;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
@@ -497,9 +545,9 @@ class _StreakHero extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 6),
-                          const Text(
-                            '12 days',
-                            style: TextStyle(
+                          Text(
+                            streak == 1 ? '1 day' : '$streak days',
+                            style: const TextStyle(
                               fontFamily: AppTextStyles.fontUi,
                               fontSize: 38,
                               fontWeight: FontWeight.w700,
@@ -510,7 +558,10 @@ class _StreakHero extends StatelessWidget {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            "You're on fire — beat your record at 17 days.",
+                            blocks.isEmpty
+                                ? 'Plan a block to start today off.'
+                                : '$done of ${blocks.length} blocks done '
+                                    'today.',
                             style: TextStyle(
                               fontSize: 12,
                               height: 1.35,
@@ -522,14 +573,14 @@ class _StreakHero extends StatelessWidget {
                     ),
                     const SizedBox(width: 12),
                     SfRing(
-                      value: 0.7,
+                      value: ratio,
                       size: 66,
                       stroke: 5,
                       color: sf.streak,
                       track: Colors.white.withValues(alpha: 0.15),
-                      child: const Text(
-                        '70%',
-                        style: TextStyle(
+                      child: Text(
+                        '${(ratio * 100).round()}%',
+                        style: const TextStyle(
                           fontFamily: AppTextStyles.fontMono,
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
@@ -592,15 +643,16 @@ class _StreakHero extends StatelessWidget {
 
 // ─── Resume card ──────────────────────────────────────────────────────────
 
-class _ResumeCard extends StatelessWidget {
+class _ResumeCard extends ConsumerWidget {
   const _ResumeCard({required this.onResume});
 
   final VoidCallback onResume;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
     final scheme = context.scheme;
+    final material = ref.watch(resumeMaterialProvider).value;
 
     return SfCard(
       padding: EdgeInsets.zero,
@@ -665,10 +717,12 @@ class _ResumeCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const SfChip('Organic Chemistry', small: true),
+                    SfChip(material?.subjectName ?? 'Library', small: true),
                     const SizedBox(height: 8),
                     Text(
-                      'Ch 4: Stereochemistry & Chirality',
+                      material?.title ?? 'Nothing to resume yet',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontFamily: AppTextStyles.fontUi,
                         fontSize: 16,
@@ -681,9 +735,14 @@ class _ResumeCard extends StatelessWidget {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        const Expanded(child: SfProgress(value: 0.42)),
+                        Expanded(
+                          child: SfProgress(value: material?.progress ?? 0),
+                        ),
                         const SizedBox(width: 8),
-                        SfMono('42%', color: sf.ink3),
+                        SfMono(
+                          '${((material?.progress ?? 0) * 100).round()}%',
+                          color: sf.ink3,
+                        ),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -692,7 +751,7 @@ class _ResumeCard extends StatelessWidget {
                       children: [
                         Flexible(
                           child: Text(
-                            '23 min left',
+                            material?.meta ?? '',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(fontSize: 11, color: sf.ink3),
@@ -720,14 +779,15 @@ class _ResumeCard extends StatelessWidget {
 
 // ─── Next exam / Flow suggestion ──────────────────────────────────────────
 
-class _NextExamCard extends StatelessWidget {
+class _NextExamCard extends ConsumerWidget {
   const _NextExamCard({required this.onTap});
 
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
+    final exam = ref.watch(nextExamProvider);
 
     return SfCard(
       onTap: onTap,
@@ -751,7 +811,7 @@ class _NextExamCard extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            '9d',
+            exam == null ? '—' : '${exam.daysLeft}d',
             style: AppTextStyles.displayL.copyWith(
               fontSize: 32,
               letterSpacing: -1.2,
@@ -761,7 +821,9 @@ class _NextExamCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Organic Chem Final',
+            exam?.title ?? 'No exams scheduled',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
@@ -769,9 +831,9 @@ class _NextExamCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          SfProgress(value: 0.62, color: sf.coral),
+          SfProgress(value: exam?.preparation ?? 0, color: sf.coral),
           const SizedBox(height: 4),
-          Text('62% prepared',
+          Text('${((exam?.preparation ?? 0) * 100).round()}% prepared',
               style: TextStyle(fontSize: 10, color: sf.ink3)),
         ],
       ),

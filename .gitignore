@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Build-time configuration. Copy dart_define.example.json and fill it in;
+# the real file stays out of git.
+dart_define.json

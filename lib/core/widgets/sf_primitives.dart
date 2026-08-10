@@ -49,6 +49,7 @@ class SfButton extends StatelessWidget {
     this.icon,
     this.trailingIcon,
     this.expand = false,
+    this.busy = false,
   });
 
   /// Icon-only square button (used for the share action on Summaries).
@@ -60,7 +61,8 @@ class SfButton extends StatelessWidget {
     this.size = SfButtonSize.md,
   })  : label = '',
         trailingIcon = null,
-        expand = false;
+        expand = false,
+        busy = false;
 
   final String label;
   final VoidCallback? onPressed;
@@ -69,6 +71,10 @@ class SfButton extends StatelessWidget {
   final IconData? icon;
   final IconData? trailingIcon;
   final bool expand;
+
+  /// Swaps the label for a spinner and ignores taps. Keeps the button's own
+  /// size so the layout doesn't jump while a request is in flight.
+  final bool busy;
 
   ({double h, double px, double fs, double r, double gap}) get _spec =>
       switch (size) {
@@ -175,27 +181,46 @@ class SfButton extends StatelessWidget {
       ],
     );
 
-    return SizedBox(
-      height: spec.h,
-      width: expand ? double.infinity : (iconOnly ? spec.h : null),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: style.bg,
-          borderRadius: radius,
-          border: style.border == null
-              ? null
-              : Border.all(color: style.border!),
-          boxShadow: style.shadow,
-        ),
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: radius,
-          child: InkWell(
-            onTap: onPressed,
+    final disabled = busy || onPressed == null;
+
+    return Opacity(
+      // Dimming rather than recolouring keeps every variant's identity while
+      // still reading as unavailable.
+      opacity: disabled ? 0.6 : 1,
+      child: SizedBox(
+        height: spec.h,
+        width: expand ? double.infinity : (iconOnly ? spec.h : null),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: style.bg,
             borderRadius: radius,
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: iconOnly ? 0 : spec.px),
-              child: content,
+            border: style.border == null
+                ? null
+                : Border.all(color: style.border!),
+            boxShadow: disabled ? null : style.shadow,
+          ),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: radius,
+            child: InkWell(
+              onTap: busy ? null : onPressed,
+              borderRadius: radius,
+              child: Padding(
+                padding:
+                    EdgeInsets.symmetric(horizontal: iconOnly ? 0 : spec.px),
+                child: busy
+                    ? Center(
+                        child: SizedBox(
+                          width: spec.fs + 3,
+                          height: spec.fs + 3,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: style.fg,
+                          ),
+                        ),
+                      )
+                    : content,
+              ),
             ),
           ),
         ),

@@ -6,18 +6,35 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme_mode_view_model.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
+import '../auth/auth_screen.dart';
+import '../auth/auth_view_model.dart';
 import '../components/components_screen.dart';
-import '../shell/shell_view_model.dart';
+import '../home/home_view_model.dart';
 import '../premium/premium_screen.dart';
-import '../splash/splash_screen.dart';
+import '../shell/shell_view_model.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
+
+  /// Maps an achievement's stable code to its badge. Unknown codes still
+  /// render — a badge added server-side shows up with a neutral icon rather
+  /// than crashing an older build.
+  static ({IconData icon, int accent}) _badge(String code) => switch (code) {
+        'hot_streak' => (icon: Icons.local_fire_department_rounded, accent: 0),
+        'quiz_ace' => (icon: Icons.emoji_events_outlined, accent: 1),
+        'card_master' => (icon: Icons.style_outlined, accent: 2),
+        'deep_focus' => (icon: Icons.my_location_rounded, accent: 3),
+        _ => (icon: Icons.star_outline_rounded, accent: 3),
+      };
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
     final scheme = context.scheme;
+    final profile = ref.watch(profileProvider).value;
+    final achievements = ref.watch(achievementsProvider).value ?? const [];
+    final email = ref.watch(sessionProvider)?.user.email ?? '';
+    final accents = [sf.coral, sf.amber, sf.violet, scheme.primary];
 
     return ListView(
       padding: EdgeInsets.only(bottom: sfNavContentInset(context)),
@@ -40,7 +57,7 @@ class ProfileScreen extends ConsumerWidget {
                     clipBehavior: Clip.none,
                     children: [
                       SfAvatar(
-                        initials: 'AM',
+                        initials: profile?.initials ?? '·',
                         size: 64,
                         background: sf.brand,
                         foreground: Colors.white,
@@ -72,7 +89,9 @@ class ProfileScreen extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Alex Morgan',
+                          profile?.displayName ?? 'Loading…',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: AppTextStyles.heading.copyWith(
                             fontSize: 22,
                             letterSpacing: -0.5,
@@ -80,12 +99,14 @@ class ProfileScreen extends ConsumerWidget {
                           ),
                         ),
                         Text(
-                          'alex.morgan@uni.edu',
+                          email,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(fontSize: 13, color: sf.ink3),
                         ),
                         const SizedBox(height: 6),
-                        const SfChip(
-                          'Pro · Renewal Aug 12',
+                        SfChip(
+                          (profile?.isPro ?? false) ? 'Pro' : 'Free plan',
                           icon: Icons.star_rounded,
                           small: true,
                         ),
@@ -169,42 +190,15 @@ class ProfileScreen extends ConsumerWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-              for (final a in <({
-                IconData icon,
-                String name,
-                String meta,
-                Color color,
-                bool earned
-              })>[
-                (
-                  icon: Icons.local_fire_department_rounded,
-                  name: 'Hot streak',
-                  meta: '10 days',
-                  color: sf.coral,
-                  earned: true
+              for (final a in achievements.map(
+                (row) => (
+                  icon: _badge(row.code).icon,
+                  name: row.name,
+                  meta: row.detail,
+                  color: accents[_badge(row.code).accent],
+                  earned: row.earned,
                 ),
-                (
-                  icon: Icons.emoji_events_outlined,
-                  name: 'First quiz',
-                  meta: 'Score 100%',
-                  color: sf.amber,
-                  earned: true
-                ),
-                (
-                  icon: Icons.style_outlined,
-                  name: 'Card master',
-                  meta: '300 cards',
-                  color: sf.violet,
-                  earned: true
-                ),
-                (
-                  icon: Icons.my_location_rounded,
-                  name: 'Sniper',
-                  meta: '90% accuracy',
-                  color: scheme.primary,
-                  earned: false
-                ),
-              ])
+              ))
                 Padding(
                   padding: const EdgeInsets.only(right: 10),
                   child: Opacity(
@@ -380,7 +374,7 @@ class ProfileScreen extends ConsumerWidget {
                     icon: Icons.logout_rounded,
                     label: 'Sign out',
                     danger: true,
-                    onTap: () => _confirmSignOut(context),
+                    onTap: () => _confirmSignOut(context, ref),
                   ),
                 ],
               ),
@@ -423,13 +417,13 @@ class ProfileScreen extends ConsumerWidget {
     if (chosen != null) ref.read(themeModeProvider.notifier).select(chosen);
   }
 
-  Future<void> _confirmSignOut(BuildContext context) async {
+  Future<void> _confirmSignOut(BuildContext context, WidgetRef ref) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Sign out?'),
         content: const Text(
-          "You'll be taken back to the start of the flow.",
+          "You'll need to sign in again to reach your library.",
         ),
         actions: [
           TextButton(
@@ -447,9 +441,15 @@ class ProfileScreen extends ConsumerWidget {
       ),
     );
 
-    if (confirmed != true || !context.mounted) return;
+    if (confirmed != true) return;
+
+    // Clear the session first, then unwind the stack — navigating first would
+    // leave the shell briefly rendering with a token that is about to die.
+    await ref.read(authControllerProvider.notifier).signOut();
+    if (!context.mounted) return;
+
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const SplashScreen()),
+      MaterialPageRoute(builder: (_) => const AuthScreen()),
       (route) => false,
     );
   }

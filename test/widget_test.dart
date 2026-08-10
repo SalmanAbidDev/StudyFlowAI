@@ -10,6 +10,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ai_study_helper/app/app.dart';
 import 'package:ai_study_helper/core/theme/theme.dart';
+import 'package:ai_study_helper/data/supabase_providers.dart';
+import 'package:ai_study_helper/features/auth/auth_view_model.dart';
 import 'package:ai_study_helper/core/widgets/widgets.dart';
 import 'package:ai_study_helper/features/auth/auth_screen.dart';
 import 'package:ai_study_helper/features/chat/chat_screen.dart';
@@ -24,6 +26,9 @@ import 'package:ai_study_helper/features/shell/shell_view_model.dart';
 import 'package:ai_study_helper/features/splash/splash_screen.dart';
 import 'package:ai_study_helper/features/summaries/summaries_screen.dart';
 import 'package:ai_study_helper/features/upload/upload_screen.dart';
+
+import 'fakes/fake_auth_repository.dart';
+import 'fakes/fake_repositories.dart';
 
 /// Give every test an iPhone-sized surface — these are phone layouts, and the
 /// default 800x600 test window is the wrong shape for them.
@@ -45,21 +50,53 @@ Future<void> _settle(WidgetTester tester) async {
   }
 }
 
-/// Every widget under test needs a ProviderScope above it. Pass [shellPage] to
-/// seed the shell onto a page other than Home.
+/// Every widget under test needs a ProviderScope above it.
+///
+/// The auth repository is always faked: overriding at that seam means no test
+/// has to initialize the Supabase singleton, so the suite stays hermetic and
+/// offline. Pass [shellPage] to seed the shell onto a page other than Home,
+/// and [signedIn] to start with a session.
 ///
 /// [builder] is threaded through to MaterialApp for the text-scale sweep.
+/// Takes the child rather than returning the override list, because
+/// flutter_riverpod does not export the `Override` type — there is no way to
+/// name it for a `List<Override>` return.
+Widget _scope({
+  required Widget child,
+  ShellPage? shellPage,
+  bool signedIn = false,
+}) {
+  return ProviderScope(
+    overrides: [
+      authRepositoryProvider
+          .overrideWithValue(FakeAuthRepository(signedIn: signedIn)),
+      // The data layer is faked wholesale. `currentUserIdProvider` normally
+      // reads the Supabase client, which does not exist here.
+      currentUserIdProvider.overrideWithValue('test-user'),
+      libraryRepositoryProvider.overrideWithValue(FakeLibraryRepository()),
+      plannerRepositoryProvider.overrideWithValue(FakePlannerRepository()),
+      studyRepositoryProvider.overrideWithValue(FakeStudyRepository()),
+      profileRepositoryProvider.overrideWithValue(FakeProfileRepository()),
+      analyticsRepositoryProvider.overrideWithValue(FakeAnalyticsRepository()),
+      chatRepositoryProvider.overrideWithValue(FakeChatRepository()),
+      storageRepositoryProvider.overrideWithValue(FakeStorageRepository()),
+      if (shellPage != null)
+        initialShellPageProvider.overrideWithValue(shellPage),
+    ],
+    child: child,
+  );
+}
+
 Widget _app(
   Widget home, {
   ThemeData? theme,
   ShellPage? shellPage,
   TransitionBuilder? builder,
+  bool signedIn = false,
 }) {
-  return ProviderScope(
-    overrides: [
-      if (shellPage != null)
-        initialShellPageProvider.overrideWithValue(shellPage),
-    ],
+  return _scope(
+    shellPage: shellPage,
+    signedIn: signedIn,
     child: MaterialApp(
       theme: theme ?? AppTheme.light,
       builder: builder,
@@ -68,11 +105,15 @@ Widget _app(
   );
 }
 
+/// The real app widget, which brings its own MaterialApp.
+Widget _wholeApp({bool signedIn = false}) =>
+    _scope(signedIn: signedIn, child: const StudyFlowApp());
+
 void main() {
   testWidgets('splash shows the brand, then advances to onboarding',
       (tester) async {
     _usePhoneSurface(tester);
-    await tester.pumpWidget(const ProviderScope(child: StudyFlowApp()));
+    await tester.pumpWidget(_wholeApp());
 
     expect(find.text('StudyFlow'), findsOneWidget);
     expect(find.text('Your AI study companion'), findsOneWidget);
@@ -88,7 +129,7 @@ void main() {
   testWidgets('onboarding pages through to auth, and auth enters the shell',
       (tester) async {
     _usePhoneSurface(tester);
-    await tester.pumpWidget(const ProviderScope(child: StudyFlowApp()));
+    await tester.pumpWidget(_wholeApp());
     await tester.pump(const Duration(seconds: 2));
     await _settle(tester);
 
@@ -106,10 +147,48 @@ void main() {
     await _settle(tester);
     expect(find.byType(AuthScreen), findsOneWidget);
 
+    // Credentials are required now — the form rejects an empty submit rather
+    // than walking straight into the shell.
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Email'),
+      'alex.morgan@uni.edu',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Password'),
+      'studyflow',
+    );
+
     await tester.tap(find.text('Sign in'));
     await _settle(tester);
     expect(find.byType(AppShell), findsOneWidget);
-    expect(find.text('Morning, Alex 👋'), findsOneWidget);
+    // The greeting is time-of-day dependent, so match the name, not the whole
+    // string — otherwise the suite passes only before noon.
+    expect(find.textContaining('Alex 👋'), findsOneWidget);
+  });
+
+  testWidgets('an empty sign-in is rejected instead of entering the shell',
+      (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(_app(const AuthScreen()));
+    await _settle(tester);
+
+    await tester.tap(find.text('Sign in'));
+    await _settle(tester);
+
+    expect(find.text('Enter your email and password.'), findsOneWidget);
+    expect(find.byType(AppShell), findsNothing);
+  });
+
+  testWidgets('a stored session skips onboarding and opens the shell',
+      (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(_app(const SplashScreen(), signedIn: true));
+
+    await tester.pump(const Duration(seconds: 2));
+    await _settle(tester);
+
+    expect(find.byType(AppShell), findsOneWidget);
+    expect(find.byType(OnboardingScreen), findsNothing);
   });
 
   testWidgets('tab bar switches between the shell destinations',
@@ -126,7 +205,7 @@ void main() {
 
     await tester.tap(find.text('Planner'));
     await _settle(tester);
-    expect(find.text('May 6 · 4h 15m planned today'), findsOneWidget);
+    expect(find.text('Stereochem · Read Ch 4'), findsOneWidget);
 
     await tester.tap(find.text('Profile'));
     await _settle(tester);
@@ -152,9 +231,8 @@ void main() {
     await _settle(tester);
     expect(find.text('EXPLANATION'), findsOneWidget);
 
-    // Walk to the end and land on the result screen.
-    await tester.tap(find.text('Next question'));
-    await _settle(tester);
+    // Walk to the end and land on the result screen. The fake quiz has two
+    // questions, so one "Next" then "See results".
     await tester.tap(find.text('Next question'));
     await _settle(tester);
     await tester.tap(find.text('See results'));

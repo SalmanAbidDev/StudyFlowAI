@@ -1,7 +1,8 @@
 // lib/features/upload/upload_screen.dart
 //
-// Presented as a modal over the shell. The "uploading" row is a scripted
-// animation — no file is read and nothing is sent anywhere.
+// Presented as a modal over the shell. Picks a real file, uploads it to the
+// private `materials` bucket, and records the row that makes it appear in the
+// library.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,11 +14,21 @@ import 'upload_view_model.dart';
 class UploadScreen extends ConsumerWidget {
   const UploadScreen({super.key});
 
+  Future<void> _pick(BuildContext context, WidgetRef ref) async {
+    final ok = await ref.read(uploadProvider.notifier).pickAndUpload();
+    if (!ok || !context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Added to your library.')),
+    );
+    Navigator.of(context).maybePop();
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
     final scheme = context.scheme;
-    final progress = ref.watch(uploadProgressProvider);
+    final upload = ref.watch(uploadProvider);
 
     final sources = <({
       IconData icon,
@@ -90,11 +101,8 @@ class UploadScreen extends ConsumerWidget {
                 padding: const EdgeInsets.fromLTRB(22, 0, 22, 28),
                 children: [
                   _DropZone(
-                    onBrowse: () => ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('File picking arrives with the data layer'),
-                      ),
-                    ),
+                    busy: upload.isBusy,
+                    onBrowse: () => _pick(context, ref),
                   ),
                   const SizedBox(height: 20),
                   SfEyebrow('Or add from', color: sf.ink3),
@@ -120,72 +128,101 @@ class UploadScreen extends ConsumerWidget {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 22),
-                  SfEyebrow('Uploading', color: sf.ink3),
-                  const SizedBox(height: 10),
-                  SfCard(
-                    child: Row(
-                      children: [
-                        SoftIconTile(
-                          icon: Icons.picture_as_pdf_outlined,
-                          color: sf.coralInk,
-                          background: sf.coralSoft,
-                          width: 36,
-                          height: 44,
-                          radius: 8,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      'Macroeconomics_Ch07.pdf',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: sf.ink,
-                                      ),
+                  // Only present once there is something to report. A
+                  // permanent "Uploading" section with nothing in it was fine
+                  // as a mockup; with a real transfer it would be a lie.
+                  if (upload.stage != UploadStage.idle) ...[
+                    const SizedBox(height: 22),
+                    SfEyebrow(
+                      switch (upload.stage) {
+                        UploadStage.failed => 'Failed',
+                        UploadStage.done => 'Added',
+                        _ => 'Uploading',
+                      },
+                      color: sf.ink3,
+                    ),
+                    const SizedBox(height: 10),
+                    SfCard(
+                      child: Row(
+                        children: [
+                          SoftIconTile(
+                            icon: switch (upload.stage) {
+                              UploadStage.failed => Icons.error_outline_rounded,
+                              UploadStage.done => Icons.check_rounded,
+                              _ => Icons.picture_as_pdf_outlined,
+                            },
+                            color: upload.stage == UploadStage.done
+                                ? sf.emeraldInk
+                                : sf.coralInk,
+                            background: upload.stage == UploadStage.done
+                                ? sf.emeraldSoft
+                                : sf.coralSoft,
+                            width: 36,
+                            height: 44,
+                            radius: 8,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  upload.fileName.isEmpty
+                                      ? 'Choosing a file…'
+                                      : upload.fileName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: sf.ink,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                // The SDK reports no byte-level progress for a
+                                // single upload, so this is indeterminate
+                                // rather than a percentage invented to look
+                                // busy.
+                                if (upload.isBusy)
+                                  const SfProgress(value: null)
+                                else
+                                  Text(
+                                    upload.error ??
+                                        'Ready in your library · '
+                                            '${upload.sizeLabel}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: upload.stage == UploadStage.failed
+                                          ? sf.coralInk
+                                          : sf.ink3,
                                     ),
                                   ),
-                                  SfMono('${(progress * 100).round()}%',
-                                      color: sf.ink3),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              SfProgress(value: progress),
-                              const SizedBox(height: 4),
-                              Text(
-                                '4.2MB · 12s left',
-                                style: TextStyle(fontSize: 11, color: sf.ink3),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        GestureDetector(
-                          onTap: ref.read(uploadProgressProvider.notifier).cancel,
-                          child: Container(
-                            width: 28,
-                            height: 28,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: scheme.surfaceContainerHigh,
-                              borderRadius: BorderRadius.circular(8),
+                              ],
                             ),
-                            child: Icon(Icons.close_rounded,
-                                size: 14, color: sf.ink2),
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 8),
+                          if (!upload.isBusy)
+                            GestureDetector(
+                              onTap: ref.read(uploadProvider.notifier).reset,
+                              child: Container(
+                                width: 28,
+                                height: 28,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: scheme.surfaceContainerHigh,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(Icons.close_rounded,
+                                    size: 14, color: sf.ink2),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -197,9 +234,10 @@ class UploadScreen extends ConsumerWidget {
 }
 
 class _DropZone extends StatelessWidget {
-  const _DropZone({required this.onBrowse});
+  const _DropZone({required this.onBrowse, this.busy = false});
 
   final VoidCallback onBrowse;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -254,6 +292,7 @@ class _DropZone extends StatelessWidget {
             SfButton(
               'Browse files',
               icon: Icons.add_rounded,
+              busy: busy,
               onPressed: onBrowse,
             ),
           ],

@@ -11,6 +11,10 @@ import '../theme/theme.dart';
 
 /// Linear progress. Defaults to the indigo → lavender brand sweep; pass a
 /// solid [color] to tie the bar to a subject accent.
+///
+/// A null [value] is indeterminate — for work whose size is genuinely
+/// unknown, like an upload the SDK reports no byte counts for. Inventing a
+/// percentage there would be a nicer-looking lie.
 class SfProgress extends StatelessWidget {
   const SfProgress({
     super.key,
@@ -20,7 +24,7 @@ class SfProgress extends StatelessWidget {
     this.height = 6,
   });
 
-  final double value;
+  final double? value;
   final Color? color;
   final Color? track;
   final double height;
@@ -28,7 +32,22 @@ class SfProgress extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sf = context.sf;
-    final v = value.clamp(0.0, 1.0);
+    final trackColor = track ?? context.scheme.surfaceContainerHigh;
+    final gradient =
+        color == null ? LinearGradient(colors: [sf.brand, sf.lavender]) : null;
+
+    if (value == null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(height),
+        child: SizedBox(
+          height: height,
+          child: LinearProgressIndicator(
+            backgroundColor: trackColor,
+            color: color ?? sf.brand,
+          ),
+        ),
+      );
+    }
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(height),
@@ -36,19 +55,13 @@ class SfProgress extends StatelessWidget {
         height: height,
         child: Stack(
           children: [
-            Positioned.fill(
-              child: ColoredBox(
-                color: track ?? context.scheme.surfaceContainerHigh,
-              ),
-            ),
+            Positioned.fill(child: ColoredBox(color: trackColor)),
             FractionallySizedBox(
-              widthFactor: v,
+              widthFactor: value!.clamp(0.0, 1.0),
               child: Container(
                 decoration: BoxDecoration(
                   color: color,
-                  gradient: color == null
-                      ? LinearGradient(colors: [sf.brand, sf.lavender])
-                      : null,
+                  gradient: gradient,
                   borderRadius: BorderRadius.circular(height),
                 ),
               ),

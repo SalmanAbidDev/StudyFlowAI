@@ -1,21 +1,29 @@
 // lib/features/splash/splash_screen.dart
+//
+// The brand moment, and the app's routing decision: `Supabase.initialize`
+// has already restored any stored session by the time this builds, so the
+// choice of destination is synchronous — the delay is for the animation, not
+// for the session.
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
+import '../auth/auth_view_model.dart';
 import '../onboarding/onboarding_screen.dart';
+import '../shell/app_shell.dart';
 
-class SplashScreen extends StatefulWidget {
+class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
   @override
-  State<SplashScreen> createState() => _SplashScreenState();
+  ConsumerState<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> {
+class _SplashScreenState extends ConsumerState<SplashScreen> {
   Timer? _timer;
 
   @override
@@ -23,12 +31,14 @@ class _SplashScreenState extends State<SplashScreen> {
     super.initState();
     _timer = Timer(const Duration(milliseconds: 1900), () {
       if (!mounted) return;
+      final signedIn = ref.read(isSignedInProvider);
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           transitionDuration: const Duration(milliseconds: 450),
           pageBuilder: (_, animation, _) => FadeTransition(
             opacity: animation,
-            child: const OnboardingScreen(),
+            // A returning user skips the value story and lands in the app.
+            child: signedIn ? const AppShell() : const OnboardingScreen(),
           ),
         ),
       );

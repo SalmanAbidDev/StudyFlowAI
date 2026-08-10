@@ -1,7 +1,7 @@
 // lib/features/auth/auth_screen.dart
 //
-// Sign-in. Nothing is authenticated — any tap on the primary CTA or a social
-// button drops straight into the app shell.
+// Real Supabase email/password auth. The one screen covers both signing in
+// and creating an account; `authModeProvider` decides which.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,22 +18,59 @@ class AuthScreen extends ConsumerStatefulWidget {
   ConsumerState<AuthScreen> createState() => _AuthScreenState();
 }
 
-/// Stateful only for the two field controllers; the mask toggle is a provider.
+/// Stateful only for the field controllers; every flag is a provider.
 class _AuthScreenState extends ConsumerState<AuthScreen> {
-  final _email = TextEditingController(text: 'alex.morgan@uni.edu');
-  final _password = TextEditingController(text: 'studyflow');
+  final _name = TextEditingController();
+  final _email = TextEditingController();
+  final _password = TextEditingController();
 
   @override
   void dispose() {
+    _name.dispose();
     _email.dispose();
     _password.dispose();
     super.dispose();
   }
 
-  void _enter() {
+  Future<void> _submit(AuthMode mode) async {
+    final ok = await ref.read(authControllerProvider.notifier).submit(
+          mode: mode,
+          email: _email.text,
+          password: _password.text,
+          fullName: _name.text,
+        );
+    if (!ok || !mounted) return;
+
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const AppShell()),
       (route) => false,
+    );
+  }
+
+  Future<void> _resetPassword() async {
+    final email = _email.text.trim();
+    final messenger = ScaffoldMessenger.of(context);
+    if (email.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Enter your email address first.')),
+      );
+      return;
+    }
+    await ref.read(authRepositoryProvider).sendPasswordReset(email);
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(content: Text('Reset link sent to $email.')),
+    );
+  }
+
+  void _socialUnavailable(String provider) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '$provider sign-in needs the provider enabled in the Supabase '
+          'dashboard first.',
+        ),
+      ),
     );
   }
 
@@ -42,6 +79,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     final sf = context.sf;
     final scheme = context.scheme;
     final obscure = ref.watch(passwordObscuredProvider);
+    final mode = ref.watch(authModeProvider);
+    final request = ref.watch(authControllerProvider);
+    final isSignUp = mode == AuthMode.signUp;
 
     return Scaffold(
       body: SafeArea(
@@ -65,7 +105,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   const SfLogo(size: 26),
                   const SizedBox(height: 28),
                   Text(
-                    "Welcome back.\nLet's keep the streak.",
+                    isSignUp
+                        ? 'Start your\nstudy streak.'
+                        : "Welcome back.\nLet's keep the streak.",
                     style: AppTextStyles.displayL.copyWith(
                       fontSize: 34,
                       letterSpacing: -1.2,
@@ -75,10 +117,21 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Sign in to pick up where you left off.',
+                    isSignUp
+                        ? 'Create an account to sync across your devices.'
+                        : 'Sign in to pick up where you left off.',
                     style: TextStyle(fontSize: 14, color: sf.ink3),
                   ),
                   const SizedBox(height: 28),
+                  if (isSignUp) ...[
+                    SfField(
+                      controller: _name,
+                      icon: Icons.person_outline_rounded,
+                      hint: 'Full name',
+                      keyboardType: TextInputType.name,
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   SfField(
                     controller: _email,
                     icon: Icons.mail_outline_rounded,
@@ -98,27 +151,33 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                         ref.read(passwordObscuredProvider.notifier).toggle,
                   ),
                   const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: GestureDetector(
-                      onTap: () {},
-                      child: Text(
-                        'Forgot password?',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.primary,
+                  if (!isSignUp)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: GestureDetector(
+                        onTap: _resetPassword,
+                        child: Text(
+                          'Forgot password?',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.primary,
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                  if (request.hasError) ...[
+                    const SizedBox(height: 14),
+                    _AuthError(message: '${request.error}'),
+                  ],
                   const SizedBox(height: 18),
                   SfButton(
-                    'Sign in',
+                    isSignUp ? 'Create account' : 'Sign in',
                     size: SfButtonSize.lg,
                     expand: true,
                     trailingIcon: Icons.arrow_forward_rounded,
-                    onPressed: _enter,
+                    busy: request.isLoading,
+                    onPressed: () => _submit(mode),
                   ),
                   const SizedBox(height: 24),
                   Row(
@@ -136,7 +195,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     label: 'Continue with Apple',
                     background: context.isDark ? Colors.white : Colors.black,
                     foreground: context.isDark ? Colors.black : Colors.white,
-                    onTap: _enter,
+                    onTap: () => _socialUnavailable('Apple'),
                     child: Icon(
                       Icons.apple,
                       size: 22,
@@ -149,7 +208,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     background: scheme.surface,
                     foreground: scheme.onSurface,
                     bordered: true,
-                    onTap: _enter,
+                    onTap: () => _socialUnavailable('Google'),
                     child: const GoogleGlyph(size: 20),
                   ),
                 ],
@@ -157,25 +216,70 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(28, 16, 28, 20),
-              child: Text.rich(
-                TextSpan(
-                  text: 'New to StudyFlow? ',
-                  style: TextStyle(fontSize: 13, color: sf.ink3),
-                  children: [
-                    TextSpan(
-                      text: 'Create an account',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: scheme.primary,
-                      ),
+              child: GestureDetector(
+                onTap: () => ref.read(authModeProvider.notifier).update(
+                      isSignUp ? AuthMode.signIn : AuthMode.signUp,
                     ),
-                  ],
+                child: Text.rich(
+                  TextSpan(
+                    text: isSignUp
+                        ? 'Already have an account? '
+                        : 'New to StudyFlow? ',
+                    style: TextStyle(fontSize: 13, color: sf.ink3),
+                    children: [
+                      TextSpan(
+                        text: isSignUp ? 'Sign in' : 'Create an account',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: scheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  textAlign: TextAlign.center,
                 ),
-                textAlign: TextAlign.center,
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Inline failure under the form — a snackbar would be gone before someone
+/// finishes reading why their password was rejected.
+class _AuthError extends StatelessWidget {
+  const _AuthError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final sf = context.sf;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: sf.coralSoft,
+        borderRadius: AppRadius.brMd,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.error_outline_rounded, size: 18, color: sf.coralInk),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.35,
+                fontWeight: FontWeight.w500,
+                color: sf.coralInk,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

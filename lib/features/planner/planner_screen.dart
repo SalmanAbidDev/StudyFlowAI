@@ -8,7 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
-import '../../data/demo_content.dart';
+import '../../data/models/study_block.dart';
+import '../../data/models/subject.dart';
 import '../shell/shell_view_model.dart';
 import 'planner_view_model.dart';
 
@@ -16,12 +17,46 @@ class PlannerScreen extends ConsumerWidget {
   const PlannerScreen({super.key});
 
   static const _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  /// "May 6 · 4h 15m planned" — the date and the total the blocks add up to,
+  /// rather than a figure that has to be kept in step by hand.
+  static String _subtitle(DateTime day, List<StudyBlock> blocks) {
+    final date = '${_months[day.month - 1]} ${day.day}';
+    var minutes = 0;
+    for (final block in blocks) {
+      final start = block.startsAt;
+      final end = block.endsAt;
+      if (start == null || end == null) continue;
+      minutes += (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute);
+    }
+    if (minutes <= 0) return '$date · nothing planned';
+
+    final h = minutes ~/ 60;
+    final m = minutes % 60;
+    final total = h == 0 ? '${m}m' : (m == 0 ? '${h}h' : '${h}h ${m}m');
+    return '$date · $total planned';
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
     final blocks = ref.watch(plannerBlocksProvider);
     final selectedDay = ref.watch(selectedDayProvider);
+
+    final now = DateTime.now();
+    final monday = DateTime(now.year, now.month, now.day)
+        .subtract(Duration(days: now.weekday - 1));
+    final exams = ref.watch(upcomingExamsProvider).value ?? const [];
+    final examDays = {
+      for (final exam in exams)
+        if (exam.examDate.difference(monday).inDays.clamp(0, 6) ==
+            exam.examDate.difference(monday).inDays)
+          exam.examDate.day,
+    };
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -40,7 +75,8 @@ class PlannerScreen extends ConsumerWidget {
                           .copyWith(fontSize: 28, color: sf.ink),
                     ),
                     Text(
-                      'May 6 · 4h 15m planned today',
+                      _subtitle(ref.watch(selectedDateProvider),
+                          blocks.value ?? const []),
                       style: TextStyle(fontSize: 12, color: sf.ink3),
                     ),
                   ],
@@ -68,9 +104,12 @@ class PlannerScreen extends ConsumerWidget {
                 Expanded(
                   child: _DayCell(
                     label: _days[i],
-                    date: 4 + i,
+                    date: monday.add(Duration(days: i)).day,
                     selected: i == selectedDay,
-                    marked: i == 3 || i == 5,
+                    // A dot marks a day that has an exam on it.
+                    marked: examDays.contains(
+                      monday.add(Duration(days: i)).day,
+                    ),
                     onTap: () =>
                         ref.read(selectedDayProvider.notifier).update(i),
                   ),
@@ -125,23 +164,37 @@ class PlannerScreen extends ConsumerWidget {
           ),
         ),
         Expanded(
-          child: ReorderableListView.builder(
-            padding: const EdgeInsets.fromLTRB(22, 0, 22, 8),
-            buildDefaultDragHandles: false,
-            itemCount: blocks.length,
-            onReorderItem: ref.read(plannerBlocksProvider.notifier).reorder,
-            proxyDecorator: (child, index, animation) => Material(
-              color: Colors.transparent,
-              child: Transform.scale(scale: 1.02, child: child),
+          child: blocks.when(
+            loading: () => const SfLoadingList(rows: 4, height: 68),
+            error: (error, _) => SfErrorView(
+              error: error,
+              onRetry: () => ref.invalidate(plannerBlocksProvider),
             ),
-            itemBuilder: (context, i) {
-              final block = blocks[i];
-              return Padding(
-                key: ValueKey(block.id),
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _BlockRow(block: block, index: i),
-              );
-            },
+            data: (items) => items.isEmpty
+                ? SfEmptyView(
+                    icon: Icons.event_note_outlined,
+                    title: 'Nothing planned',
+                    body: 'Add a focus block and it will show up here.',
+                  )
+                : ReorderableListView.builder(
+                    padding: const EdgeInsets.fromLTRB(22, 0, 22, 8),
+                    buildDefaultDragHandles: false,
+                    itemCount: items.length,
+                    onReorderItem:
+                        ref.read(plannerBlocksProvider.notifier).reorder,
+                    proxyDecorator: (child, index, animation) => Material(
+                      color: Colors.transparent,
+                      child: Transform.scale(scale: 1.02, child: child),
+                    ),
+                    itemBuilder: (context, i) {
+                      final block = items[i];
+                      return Padding(
+                        key: ValueKey(block.id),
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _BlockRow(block: block, index: i),
+                      );
+                    },
+                  ),
           ),
         ),
         Padding(

@@ -10,7 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
-import '../../data/demo_content.dart';
+import '../../data/models/flashcard.dart';
 import 'flashcards_view_model.dart';
 
 class FlashcardsScreen extends ConsumerStatefulWidget {
@@ -25,44 +25,86 @@ class FlashcardsScreen extends ConsumerStatefulWidget {
 /// through AnimatedBuilder. Only the deck position is shared state.
 class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _flip = AnimationController(
+  late final AnimationController flip = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 600),
   );
 
-  bool get _showingBack => _flip.value > 0.5;
+  bool get _showingBack => flip.value > 0.5;
 
   @override
   void dispose() {
-    _flip.dispose();
+    flip.dispose();
     super.dispose();
   }
 
   void _toggleFace() {
     if (_showingBack) {
-      _flip.reverse();
+      flip.reverse();
     } else {
-      _flip.forward();
+      flip.forward();
     }
   }
 
-  void _step(int delta) {
-    _flip.value = 0;
-    final next = (ref.read(flashcardIndexProvider) + delta)
-        .clamp(0, demoDeck.length - 1);
+  void _step(int delta, int deckSize) {
+    flip.value = 0;
+    final next =
+        (ref.read(flashcardIndexProvider) + delta).clamp(0, deckSize - 1);
     ref.read(flashcardIndexProvider.notifier).update(next);
   }
 
   @override
   Widget build(BuildContext context) {
-    final sf = context.sf;
-    final scheme = context.scheme;
-    final index = ref.watch(flashcardIndexProvider);
-    final card = demoDeck[index];
+    final deck = ref.watch(deckProvider);
 
     return Scaffold(
       body: SafeArea(
-        child: Column(
+        child: deck.when(
+          loading: () => const SfLoadingList(rows: 3, height: 120),
+          error: (error, _) => SfErrorView(
+            error: error,
+            onRetry: () => ref.invalidate(deckProvider),
+          ),
+          data: (data) => (data == null || data.cards.isEmpty)
+              ? SfEmptyView(
+                  icon: Icons.style_outlined,
+                  title: 'No cards yet',
+                  body: 'Upload a document and Flow will build a deck from it.',
+                  actionLabel: 'Back',
+                  onAction: () => Navigator.of(context).maybePop(),
+                )
+              : _DeckBody(deck: data, flip: flip, onFlip: _toggleFace,
+                  onStep: (delta) => _step(delta, data.cards.length)),
+        ),
+      ),
+    );
+  }
+}
+
+class _DeckBody extends ConsumerWidget {
+  const _DeckBody({
+    required this.deck,
+    required this.flip,
+    required this.onFlip,
+    required this.onStep,
+  });
+
+  final Deck deck;
+  final AnimationController flip;
+  final VoidCallback onFlip;
+  final void Function(int delta) onStep;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sf = context.sf;
+    final scheme = context.scheme;
+    // A deck can shrink under a stale index — clamp rather than crash.
+    final index =
+        ref.watch(flashcardIndexProvider).clamp(0, deck.cards.length - 1);
+    final card = deck.cards[index];
+    final cards = deck.cards;
+
+    return Column(
           children: [
             // Header
             Padding(
@@ -76,9 +118,9 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
                   Expanded(
                     child: Column(
                       children: [
-                        SfEyebrow('Stereochemistry · deck', tracking: 1),
+                        SfEyebrow('${deck.title} · deck', tracking: 1),
                         Text(
-                          '${index + 1} / ${demoDeck.length}',
+                          '${index + 1} / ${cards.length}',
                           style: TextStyle(
                             fontFamily: AppTextStyles.fontUi,
                             fontSize: 14,
@@ -104,7 +146,7 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
               padding: const EdgeInsets.fromLTRB(22, 0, 22, 18),
               child: Row(
                 children: [
-                  for (var i = 0; i < demoDeck.length; i++) ...[
+                  for (var i = 0; i < cards.length; i++) ...[
                     if (i > 0) const SizedBox(width: 4),
                     Expanded(
                       child: Container(
@@ -133,7 +175,7 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
                       alignment: Alignment.center,
                       children: [
                         for (final offset in [2, 1])
-                          if (index + offset < demoDeck.length)
+                          if (index + offset < cards.length)
                             Positioned(
                               left: offset * 8,
                               right: offset * 8,
@@ -156,11 +198,11 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
                               ),
                             ),
                         GestureDetector(
-                          onTap: _toggleFace,
+                          onTap: onFlip,
                           child: AnimatedBuilder(
-                            animation: _flip,
+                            animation: flip,
                             builder: (context, _) {
-                              final angle = _flip.value * math.pi;
+                              final angle = flip.value * math.pi;
                               final showBack = angle > math.pi / 2;
                               return Transform(
                                 alignment: Alignment.center,
@@ -172,9 +214,9 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
                                         alignment: Alignment.center,
                                         transform: Matrix4.identity()
                                           ..rotateY(math.pi),
-                                        child: _CardBack(card: card),
+                                        child: _CardBack(card: card, tag: deck.title),
                                       )
-                                    : _CardFront(card: card),
+                                    : _CardFront(card: card, tag: deck.title),
                               );
                             },
                           ),
@@ -195,7 +237,7 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
                     icon: Icons.refresh_rounded,
                     // Writing the controller's value notifies the
                     // AnimatedBuilder around the card by itself.
-                    onTap: () => _flip.value = 0,
+                    onTap: () => flip.value = 0,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -204,7 +246,7 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
                       icon: Icons.refresh_rounded,
                       background: sf.coralSoft,
                       foreground: sf.coralInk,
-                      onTap: () => _step(-1),
+                      onTap: () => onStep(-1),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -217,23 +259,22 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
                           ? AppColors.textPrimary
                           : Colors.white,
                       glow: true,
-                      onTap: () => _step(1),
+                      onTap: () => onStep(1),
                     ),
                   ),
                 ],
               ),
             ),
-          ],
-        ),
-      ),
+      ],
     );
   }
 }
 
 class _CardFront extends StatelessWidget {
-  const _CardFront({required this.card});
+  const _CardFront({required this.card, required this.tag});
 
   final Flashcard card;
+  final String tag;
 
   @override
   Widget build(BuildContext context) {
@@ -258,34 +299,42 @@ class _CardFront extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              SfChip(card.tag, small: true),
+              SfChip(tag, small: true),
               Flexible(
                 child: SfMono('TAP TO FLIP', color: sf.ink4),
               ),
             ],
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'QUESTION',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: sf.ink3,
-                ),
+          // Flexible + scroll: the card is a fixed 360 tall by design, but a
+          // long question or a large text scale can exceed it. Letting the
+          // middle band take the slack keeps the chip and mastery rows pinned
+          // where the design puts them.
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'QUESTION',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: sf.ink3,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    card.question,
+                    style: AppTextStyles.heading.copyWith(
+                      fontSize: 26,
+                      letterSpacing: -0.6,
+                      height: 1.15,
+                      color: sf.ink,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              Text(
-                card.question,
-                style: AppTextStyles.heading.copyWith(
-                  fontSize: 26,
-                  letterSpacing: -0.6,
-                  height: 1.15,
-                  color: sf.ink,
-                ),
-              ),
-            ],
+            ),
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -317,9 +366,10 @@ class _CardFront extends StatelessWidget {
 }
 
 class _CardBack extends StatelessWidget {
-  const _CardBack({required this.card});
+  const _CardBack({required this.card, required this.tag});
 
   final Flashcard card;
+  final String tag;
 
   @override
   Widget build(BuildContext context) {
@@ -365,15 +415,21 @@ class _CardBack extends StatelessWidget {
               SfMono('BACK', color: Colors.white.withValues(alpha: 0.7)),
             ],
           ),
-          Text(
-            card.answer,
-            style: const TextStyle(
-              fontFamily: AppTextStyles.fontUi,
-              fontSize: 19,
-              fontWeight: FontWeight.w600,
-              height: 1.4,
-              letterSpacing: -0.3,
-              color: Colors.white,
+          // Same reasoning as the front: a long answer takes the slack rather
+          // than pushing the source line off the card.
+          Flexible(
+            child: SingleChildScrollView(
+              child: Text(
+                card.answer,
+                style: const TextStyle(
+                  fontFamily: AppTextStyles.fontUi,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w600,
+                  height: 1.4,
+                  letterSpacing: -0.3,
+                  color: Colors.white,
+                ),
+              ),
             ),
           ),
           Text(

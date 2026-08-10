@@ -9,23 +9,57 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
-import '../../data/demo_content.dart';
+import '../../data/models/quiz.dart';
 import 'quiz_result_screen.dart';
 import 'quiz_view_model.dart';
 
 class QuizScreen extends ConsumerWidget {
   const QuizScreen({super.key});
 
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final run = ref.watch(quizProvider);
+
+    return Scaffold(
+      body: SafeArea(
+        child: run.when(
+          loading: () => const SfLoadingList(rows: 5, height: 90),
+          error: (error, _) => SfErrorView(
+            error: error,
+            onRetry: () => ref.invalidate(quizProvider),
+          ),
+          data: (data) => data.isEmpty
+              ? SfEmptyView(
+                  icon: Icons.quiz_outlined,
+                  title: 'No quiz yet',
+                  body: 'Upload a document and Flow will build one from it.',
+                  actionLabel: 'Back',
+                  onAction: () => Navigator.of(context).maybePop(),
+                )
+              : _QuizBody(run: data),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuizBody extends ConsumerWidget {
+  const _QuizBody({required this.run});
+
+  final QuizRun run;
+
   /// Advances, or leaves for the results if the deck is finished.
-  void _advance(BuildContext context, WidgetRef ref) {
-    final run = ref.read(quizProvider);
+  Future<void> _advance(BuildContext context, WidgetRef ref) async {
     if (ref.read(quizProvider.notifier).advance()) return;
+
+    await ref.read(quizProvider.notifier).recordAttempt();
+    if (!context.mounted) return;
 
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) => QuizResultScreen(
           correct: run.correct,
-          total: demoQuiz.length,
+          total: run.total,
           elapsedSeconds: run.elapsed,
           missed: run.missed,
         ),
@@ -37,12 +71,9 @@ class QuizScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
     final scheme = context.scheme;
-    final run = ref.watch(quizProvider);
-    final q = run.question;
+    final q = run.question!;
 
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
+    return Column(
           children: [
             // Header
             Padding(
@@ -57,7 +88,7 @@ class QuizScreen extends ConsumerWidget {
                   Expanded(
                     child: Row(
                       children: [
-                        for (var i = 0; i < demoQuiz.length; i++) ...[
+                        for (var i = 0; i < run.total; i++) ...[
                           if (i > 0) const SizedBox(width: 4),
                           Expanded(
                             child: Container(
@@ -106,7 +137,7 @@ class QuizScreen extends ConsumerWidget {
                 padding: const EdgeInsets.fromLTRB(22, 14, 22, 14),
                 children: [
                   SfEyebrow(
-                    'Question ${run.index + 1} of ${demoQuiz.length} · MCQ',
+                    'Question ${run.index + 1} of ${run.total} · MCQ',
                     color: sf.ink3,
                   ),
                   const SizedBox(height: 8),
@@ -200,9 +231,7 @@ class QuizScreen extends ConsumerWidget {
                 ],
               ),
             ),
-          ],
-        ),
-      ),
+      ],
     );
   }
 }
@@ -282,7 +311,7 @@ class _OptionTile extends StatelessWidget {
                       ? const Icon(Icons.close_rounded,
                           size: 14, color: Colors.white)
                       : SfMono(
-                          option.id.toUpperCase(),
+                          option.label.toUpperCase(),
                           size: 12,
                           weight: FontWeight.w700,
                           color: picked ? Colors.white : sf.ink2,
@@ -291,7 +320,7 @@ class _OptionTile extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                option.text,
+                option.body,
                 style: TextStyle(
                   fontFamily: AppTextStyles.fontUi,
                   fontSize: 14,

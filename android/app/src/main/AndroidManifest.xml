@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Talking to Supabase. Flutter's debug manifest grants this implicitly,
+         so without declaring it here a release build would fail where debug
+         worked. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application
         android:label="ai_study_helper"
         android:name="${applicationName}"

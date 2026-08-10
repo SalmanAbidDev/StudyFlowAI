@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
-import '../../data/demo_content.dart';
+import '../../data/models/study_material.dart';
+import '../../data/models/subject.dart';
 import '../summaries/summaries_screen.dart';
+import '../summaries/summaries_view_model.dart';
 import '../upload/upload_screen.dart';
 import 'materials_view_model.dart';
 
@@ -17,6 +19,8 @@ class MaterialsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
     final filter = ref.watch(materialsFilterProvider);
+    final filters = ref.watch(libraryFiltersProvider);
+    final library = ref.watch(materialsProvider);
     final items = ref.watch(visibleMaterialsProvider);
 
     return Column(
@@ -46,43 +50,57 @@ class MaterialsScreen extends ConsumerWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(22, 0, 22, 12),
-          child: SfSearchBar(hint: 'Search 12 documents…', onTap: () {}),
+          child: SfSearchBar(
+            hint: 'Search ${library.value?.length ?? 0} documents…',
+            onTap: () {},
+          ),
         ),
         // Content-sized so the pills grow with the text rather than
         // overflowing a fixed rail height.
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 22),
-          child: Row(
-            children: [
-              for (var i = 0; i < demoLibraryFilters.length; i++)
-                _FilterPill(
-                  label: demoLibraryFilters[i].label,
-                  count: demoLibraryFilters[i].count,
-                  active: i == filter,
-                  isLast: i == demoLibraryFilters.length - 1,
-                  onTap: () =>
-                      ref.read(materialsFilterProvider.notifier).update(i),
-                ),
-            ],
+        if (filters.length > 1)
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 22),
+            child: Row(
+              children: [
+                for (var i = 0; i < filters.length; i++)
+                  _FilterPill(
+                    label: filters[i].label,
+                    count: filters[i].count,
+                    active: i == filter,
+                    isLast: i == filters.length - 1,
+                    onTap: () =>
+                        ref.read(materialsFilterProvider.notifier).update(i),
+                  ),
+              ],
+            ),
           ),
-        ),
         const SizedBox(height: 12),
         Expanded(
-          child: items.isEmpty
-              ? _EmptyLibrary(
-                  onUpload: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const UploadScreen()),
+          child: library.when(
+            loading: () => const SfLoadingList(rows: 5),
+            error: (error, _) => SfErrorView(
+              error: error,
+              onRetry: () => ref.invalidate(materialsProvider),
+            ),
+            data: (_) => items.isEmpty
+                ? _EmptyLibrary(
+                    onUpload: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const UploadScreen()),
+                    ),
+                  )
+                : RefreshIndicator(
+                    onRefresh: () async => ref.invalidate(materialsProvider),
+                    child: ListView.separated(
+                      padding: EdgeInsets.fromLTRB(
+                          22, 0, 22, sfNavContentInset(context)),
+                      itemCount: items.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 10),
+                      itemBuilder: (context, i) =>
+                          _MaterialRow(material: items[i]),
+                    ),
                   ),
-                )
-              : ListView.separated(
-                  padding: EdgeInsets.fromLTRB(
-                      22, 0, 22, sfNavContentInset(context)),
-                  itemCount: items.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (context, i) =>
-                      _MaterialRow(material: items[i]),
-                ),
+          ),
         ),
       ],
     );
@@ -141,21 +159,26 @@ class _FilterPill extends StatelessWidget {
   }
 }
 
-class _MaterialRow extends StatelessWidget {
+class _MaterialRow extends ConsumerWidget {
   const _MaterialRow({required this.material});
 
   final StudyMaterial material;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
     final accent = material.accent.color(context);
 
     return SfCard(
       padding: const EdgeInsets.all(14),
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const SummariesScreen()),
-      ),
+      onTap: () {
+        // Tell Summaries which document to open before pushing it, so the
+        // screen doesn't have to guess.
+        ref.read(selectedMaterialProvider.notifier).update(material.id);
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const SummariesScreen()),
+        );
+      },
       child: Row(
         children: [
           SoftIconTile(

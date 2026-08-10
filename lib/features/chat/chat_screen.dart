@@ -4,6 +4,8 @@
 // chatProvider; what stays here is the text field, the scroll position, and
 // the composer — controllers, not application state.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -34,7 +36,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final text = (preset ?? _input.text).trim();
     if (text.isEmpty) return;
     _input.clear();
-    ref.read(chatProvider.notifier).send(text);
+    unawaited(ref.read(chatProvider.notifier).send(text));
   }
 
   void _scrollToEnd() {
@@ -122,7 +124,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     icon: Icons.refresh_rounded,
                     size: 36,
                     iconSize: 16,
-                    onPressed: ref.read(chatProvider.notifier).reset,
+                    onPressed: () =>
+                        unawaited(ref.read(chatProvider.notifier).reset()),
                   ),
                 ],
               ),
@@ -130,17 +133,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
             // Transcript
             Expanded(
-              child: ListView.separated(
-                controller: _scroll,
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
-                itemCount: session.messages.length + (session.typing ? 1 : 0),
-                separatorBuilder: (_, _) => const SizedBox(height: 14),
-                itemBuilder: (context, i) {
-                  if (i == session.messages.length) {
-                    return const _TypingBubble();
-                  }
-                  return _Bubble(message: session.messages[i]);
-                },
+              child: session.when(
+                loading: () => const SfLoadingList(
+                  rows: 4,
+                  height: 64,
+                  padding: EdgeInsets.fromLTRB(18, 18, 18, 0),
+                ),
+                error: (error, _) => SfErrorView(
+                  error: error,
+                  onRetry: () => ref.invalidate(chatProvider),
+                ),
+                data: (data) => ListView.separated(
+                  controller: _scroll,
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+                  itemCount: data.messages.length + (data.typing ? 1 : 0),
+                  separatorBuilder: (_, _) => const SizedBox(height: 14),
+                  itemBuilder: (context, i) {
+                    if (i == data.messages.length) {
+                      return const _TypingBubble();
+                    }
+                    return _Bubble(message: data.messages[i]);
+                  },
+                ),
               ),
             ),
 

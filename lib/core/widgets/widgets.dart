@@ -1,7 +1,8 @@
-// lib/widgets/widgets.dart
+// lib/core/widgets/widgets.dart
 //
 // Barrel export for the StudyFlow component library.
 
+export 'async_states.dart';
 export 'brand.dart';
 export 'dashed_border.dart';
 export 'floating_nav.dart';

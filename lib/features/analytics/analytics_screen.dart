@@ -5,7 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
-import '../../data/demo_content.dart';
+import '../../data/models/subject.dart';
+import '../../data/repositories/analytics_repository.dart';
 import '../shell/shell_view_model.dart';
 import 'analytics_view_model.dart';
 
@@ -17,6 +18,7 @@ class AnalyticsScreen extends ConsumerWidget {
     final sf = context.sf;
     final scheme = context.scheme;
     final range = ref.watch(analyticsRangeProvider);
+    final stats = ref.watch(studyStatsProvider).value;
 
     return ListView(
       padding: EdgeInsets.only(
@@ -114,7 +116,7 @@ class AnalyticsScreen extends ConsumerWidget {
                               textBaseline: TextBaseline.alphabetic,
                               children: [
                                 Text(
-                                  '23.5',
+                                  (stats?.totalHours ?? 0).toStringAsFixed(1),
                                   style: AppTextStyles.displayXL.copyWith(
                                     letterSpacing: -1.5,
                                     height: 1,
@@ -136,16 +138,12 @@ class AnalyticsScreen extends ConsumerWidget {
                         ],
                       ),
                     ),
-                    const SfChip(
-                      '+18% vs last',
-                      tone: SfTone.emerald,
-                      icon: Icons.check_rounded,
-                      small: true,
-                    ),
                   ],
                 ),
                 const SizedBox(height: 16),
-                const _WeekBars(),
+                _WeekBars(
+                  hours: stats?.weeklyHours ?? const [0, 0, 0, 0, 0, 0, 0],
+                ),
               ],
             ),
           ),
@@ -169,11 +167,11 @@ class AnalyticsScreen extends ConsumerWidget {
                       SfEyebrow('Focus score', tracking: 1, color: sf.ink3),
                       const SizedBox(height: 10),
                       SfRing(
-                        value: 0.84,
+                        value: stats?.focusScore ?? 0,
                         size: 72,
                         color: sf.emerald,
                         child: Text(
-                          '84',
+                          '${((stats?.focusScore ?? 0) * 100).round()}',
                           style: TextStyle(
                             fontFamily: AppTextStyles.fontUi,
                             fontSize: 22,
@@ -200,7 +198,7 @@ class AnalyticsScreen extends ConsumerWidget {
                       SfEyebrow('Cards mastered', tracking: 1, color: sf.ink3),
                       const SizedBox(height: 10),
                       Text(
-                        '342',
+                        '${stats?.cardsMastered ?? 0}',
                         style: AppTextStyles.displayL.copyWith(
                           fontSize: 32,
                           letterSpacing: -1,
@@ -230,44 +228,59 @@ class AnalyticsScreen extends ConsumerWidget {
             children: [
               const SectionHeader('By subject'),
               SfCard(
-                child: Column(
-                  children: [
-                    for (var i = 0;
-                        i < demoSubjectBreakdown.length;
-                        i++) ...[
-                      if (i > 0) Divider(height: 1, color: scheme.outline),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Column(
-                          children: [
-                            Row(
+                child: Builder(
+                  builder: (context) {
+                    final split = stats?.subjectSplit ?? const <SubjectShare>[];
+                    if (split.isEmpty) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text(
+                          'No study sessions logged yet.',
+                          style: TextStyle(fontSize: 12, color: sf.ink3),
+                        ),
+                      );
+                    }
+                    return Column(
+                      children: [
+                        for (var i = 0; i < split.length; i++) ...[
+                          if (i > 0)
+                            Divider(height: 1, color: scheme.outline),
+                          Padding(
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 12),
+                            child: Column(
                               children: [
-                                Expanded(
-                                  child: Text(
-                                    demoSubjectBreakdown[i].label,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color: sf.ink,
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        split[i].label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: sf.ink,
+                                        ),
+                                      ),
                                     ),
-                                  ),
+                                    SfMono(split[i].hoursLabel,
+                                        size: 12, color: sf.ink2),
+                                  ],
                                 ),
-                                SfMono(demoSubjectBreakdown[i].hours,
-                                    size: 12, color: sf.ink2),
+                                const SizedBox(height: 6),
+                                SfProgress(
+                                  value: split[i].share,
+                                  color: split[i].accent.color(context),
+                                  height: 5,
+                                ),
                               ],
                             ),
-                            const SizedBox(height: 6),
-                            SfProgress(
-                              value: demoSubjectBreakdown[i].share,
-                              color:
-                                  demoSubjectBreakdown[i].accent.color(context),
-                              height: 5,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
+                          ),
+                        ],
+                      ],
+                    );
+                  },
                 ),
               ),
             ],
@@ -326,13 +339,18 @@ class AnalyticsScreen extends ConsumerWidget {
 }
 
 class _WeekBars extends StatelessWidget {
-  const _WeekBars();
+  const _WeekBars({required this.hours});
+
+  final List<double> hours;
 
   @override
   Widget build(BuildContext context) {
     final sf = context.sf;
     final scheme = context.scheme;
-    final max = demoWeeklyHours.reduce((a, b) => a > b ? a : b);
+    // A week with no sessions would divide by zero; fall back to 1 so every
+    // bar renders flat instead of the chart throwing.
+    final peak = hours.fold<double>(0, (a, b) => b > a ? b : a);
+    final max = peak == 0 ? 1.0 : peak;
     const labels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
     return SizedBox(
@@ -340,7 +358,7 @@ class _WeekBars extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          for (var i = 0; i < demoWeeklyHours.length; i++) ...[
+          for (var i = 0; i < hours.length; i++) ...[
             if (i > 0) const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -349,7 +367,7 @@ class _WeekBars extends StatelessWidget {
                   Expanded(
                     child: FractionallySizedBox(
                       alignment: Alignment.bottomCenter,
-                      heightFactor: demoWeeklyHours[i] / max,
+                      heightFactor: (hours[i] / max).clamp(0.0, 1.0),
                       child: Container(
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(8),

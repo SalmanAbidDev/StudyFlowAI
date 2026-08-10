@@ -5,7 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
-import '../../data/demo_content.dart';
+import '../../data/models/exam.dart';
+import '../../data/models/subject.dart';
+import '../planner/planner_view_model.dart';
 import '../shell/shell_view_model.dart';
 
 class ExamsScreen extends ConsumerWidget {
@@ -14,8 +16,10 @@ class ExamsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
-    final featured = demoExams.first;
-    final rest = demoExams.skip(1).toList();
+    final examsAsync = ref.watch(upcomingExamsProvider);
+    final exams = examsAsync.value ?? const <Exam>[];
+    final featured = exams.isEmpty ? null : exams.first;
+    final rest = exams.skip(1).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -41,8 +45,10 @@ class ExamsScreen extends ConsumerWidget {
                           .copyWith(fontSize: 28, color: sf.ink),
                     ),
                     Text(
-                      '${demoExams.length} upcoming · next in '
-                      '${featured.daysLeft} days',
+                      featured == null
+                          ? 'Nothing scheduled'
+                          : '${exams.length} upcoming · next in '
+                              '${featured.daysLeft} days',
                       style: TextStyle(fontSize: 12, color: sf.ink3),
                     ),
                   ],
@@ -58,24 +64,39 @@ class ExamsScreen extends ConsumerWidget {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(22, 12, 22, 14),
-          child: _FeaturedExam(exam: featured),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(22, 0, 22, 10),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: SfEyebrow('Upcoming', color: sf.ink3),
+        if (featured != null) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(22, 12, 22, 14),
+            child: _FeaturedExam(exam: featured),
           ),
-        ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(22, 0, 22, 10),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: SfEyebrow('Upcoming', color: sf.ink3),
+            ),
+          ),
+        ],
         Expanded(
-          child: ListView.separated(
-            padding: EdgeInsets.fromLTRB(
-                22, 0, 22, sfNavContentInset(context)),
-            itemCount: rest.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (context, i) => _ExamRow(exam: rest[i]),
+          child: examsAsync.when(
+            loading: () => const SfLoadingList(rows: 3, height: 72),
+            error: (error, _) => SfErrorView(
+              error: error,
+              onRetry: () => ref.invalidate(upcomingExamsProvider),
+            ),
+            data: (_) => exams.isEmpty
+                ? const SfEmptyView(
+                    icon: Icons.event_available_outlined,
+                    title: 'No exams scheduled',
+                    body: 'Add an exam date and Flow will plan around it.',
+                  )
+                : ListView.separated(
+                    padding: EdgeInsets.fromLTRB(
+                        22, 0, 22, sfNavContentInset(context)),
+                    itemCount: rest.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, i) => _ExamRow(exam: rest[i]),
+                  ),
           ),
         ),
       ],
