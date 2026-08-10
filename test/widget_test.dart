@@ -5,23 +5,25 @@
 // These tests advance frames explicitly instead.
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:ai_study_helper/main.dart';
-import 'package:ai_study_helper/screens/app_shell.dart';
-import 'package:ai_study_helper/screens/auth_screen.dart';
-import 'package:ai_study_helper/screens/chat_screen.dart';
-import 'package:ai_study_helper/screens/components_screen.dart';
-import 'package:ai_study_helper/screens/flashcards_screen.dart';
-import 'package:ai_study_helper/screens/onboarding_screen.dart';
-import 'package:ai_study_helper/screens/premium_screen.dart';
-import 'package:ai_study_helper/screens/quiz_result_screen.dart';
-import 'package:ai_study_helper/screens/quiz_screen.dart';
-import 'package:ai_study_helper/screens/splash_screen.dart';
-import 'package:ai_study_helper/screens/summaries_screen.dart';
-import 'package:ai_study_helper/screens/upload_screen.dart';
-import 'package:ai_study_helper/theme/theme.dart';
-import 'package:ai_study_helper/widgets/widgets.dart';
+import 'package:ai_study_helper/app/app.dart';
+import 'package:ai_study_helper/core/theme/theme.dart';
+import 'package:ai_study_helper/core/widgets/widgets.dart';
+import 'package:ai_study_helper/features/auth/auth_screen.dart';
+import 'package:ai_study_helper/features/chat/chat_screen.dart';
+import 'package:ai_study_helper/features/components/components_screen.dart';
+import 'package:ai_study_helper/features/flashcards/flashcards_screen.dart';
+import 'package:ai_study_helper/features/onboarding/onboarding_screen.dart';
+import 'package:ai_study_helper/features/premium/premium_screen.dart';
+import 'package:ai_study_helper/features/quiz/quiz_result_screen.dart';
+import 'package:ai_study_helper/features/quiz/quiz_screen.dart';
+import 'package:ai_study_helper/features/shell/app_shell.dart';
+import 'package:ai_study_helper/features/shell/shell_view_model.dart';
+import 'package:ai_study_helper/features/splash/splash_screen.dart';
+import 'package:ai_study_helper/features/summaries/summaries_screen.dart';
+import 'package:ai_study_helper/features/upload/upload_screen.dart';
 
 /// Give every test an iPhone-sized surface — these are phone layouts, and the
 /// default 800x600 test window is the wrong shape for them.
@@ -43,11 +45,34 @@ Future<void> _settle(WidgetTester tester) async {
   }
 }
 
+/// Every widget under test needs a ProviderScope above it. Pass [shellPage] to
+/// seed the shell onto a page other than Home.
+///
+/// [builder] is threaded through to MaterialApp for the text-scale sweep.
+Widget _app(
+  Widget home, {
+  ThemeData? theme,
+  ShellPage? shellPage,
+  TransitionBuilder? builder,
+}) {
+  return ProviderScope(
+    overrides: [
+      if (shellPage != null)
+        initialShellPageProvider.overrideWithValue(shellPage),
+    ],
+    child: MaterialApp(
+      theme: theme ?? AppTheme.light,
+      builder: builder,
+      home: home,
+    ),
+  );
+}
+
 void main() {
   testWidgets('splash shows the brand, then advances to onboarding',
       (tester) async {
     _usePhoneSurface(tester);
-    await tester.pumpWidget(const StudyFlowApp());
+    await tester.pumpWidget(const ProviderScope(child: StudyFlowApp()));
 
     expect(find.text('StudyFlow'), findsOneWidget);
     expect(find.text('Your AI study companion'), findsOneWidget);
@@ -63,7 +88,7 @@ void main() {
   testWidgets('onboarding pages through to auth, and auth enters the shell',
       (tester) async {
     _usePhoneSurface(tester);
-    await tester.pumpWidget(const StudyFlowApp());
+    await tester.pumpWidget(const ProviderScope(child: StudyFlowApp()));
     await tester.pump(const Duration(seconds: 2));
     await _settle(tester);
 
@@ -90,7 +115,7 @@ void main() {
   testWidgets('tab bar switches between the shell destinations',
       (tester) async {
     _usePhoneSurface(tester);
-    await tester.pumpWidget(const MaterialApp(home: AppShell()));
+    await tester.pumpWidget(_app(const AppShell()));
     await _settle(tester);
 
     expect(find.byType(FloatingNavBar), findsOneWidget);
@@ -111,7 +136,7 @@ void main() {
   testWidgets('quiz reveals the answer on tap and scores the run',
       (tester) async {
     _usePhoneSurface(tester);
-    await tester.pumpWidget(const MaterialApp(home: AppShell()));
+    await tester.pumpWidget(_app(const AppShell()));
     await _settle(tester);
 
     // Home → Quiz quick action.
@@ -140,7 +165,7 @@ void main() {
 
   testWidgets('flashcards flip to reveal the answer', (tester) async {
     _usePhoneSurface(tester);
-    await tester.pumpWidget(const MaterialApp(home: AppShell()));
+    await tester.pumpWidget(_app(const AppShell()));
     await _settle(tester);
 
     await tester.tap(find.text('Flashcards'));
@@ -158,7 +183,7 @@ void main() {
   testWidgets('chat answers a suggested prompt with a scripted reply',
       (tester) async {
     _usePhoneSurface(tester);
-    await tester.pumpWidget(const MaterialApp(home: ChatScreen()));
+    await tester.pumpWidget(_app(const ChatScreen()));
     await _settle(tester);
 
     await tester.tap(find.text('Quiz me on this'));
@@ -178,29 +203,40 @@ void main() {
   // Every screen, in both brightnesses. Any overflow or layout assertion in
   // one of these fails the test, which is the point.
   group('renders without layout errors', () {
-    final screens = <String, Widget Function()>{
-      'splash': SplashScreen.new,
-      'onboarding': OnboardingScreen.new,
-      'auth': AuthScreen.new,
-      'shell/home': AppShell.new,
-      'shell/materials': () => const AppShell(initialPage: ShellPage.materials),
-      'shell/planner': () => const AppShell(initialPage: ShellPage.planner),
-      'shell/profile': () => const AppShell(initialPage: ShellPage.profile),
-      'shell/exams': () => const AppShell(initialPage: ShellPage.exams),
-      'shell/analytics': () => const AppShell(initialPage: ShellPage.analytics),
-      'upload': UploadScreen.new,
-      'chat': ChatScreen.new,
-      'summaries': SummariesScreen.new,
-      'flashcards': FlashcardsScreen.new,
-      'quiz': QuizScreen.new,
-      'quizResult': () => const QuizResultScreen(
-            correct: 8,
-            total: 10,
-            elapsedSeconds: 402,
-            missed: ['Q3 · Assigning R/S priority', 'Q7 · Meso compounds'],
-          ),
-      'premium': PremiumScreen.new,
-      'components': ComponentsScreen.new,
+    /// Seeds the shell to open on [page] instead of Home.
+    ({Widget Function() home, ShellPage? shellPage}) shellOn(ShellPage page) =>
+        (home: AppShell.new, shellPage: page);
+
+    ({Widget Function() home, ShellPage? shellPage}) plain(
+      Widget Function() home,
+    ) =>
+        (home: home, shellPage: null);
+
+    final screens = {
+      'splash': plain(SplashScreen.new),
+      'onboarding': plain(OnboardingScreen.new),
+      'auth': plain(AuthScreen.new),
+      'shell/home': plain(AppShell.new),
+      'shell/materials': shellOn(ShellPage.materials),
+      'shell/planner': shellOn(ShellPage.planner),
+      'shell/profile': shellOn(ShellPage.profile),
+      'shell/exams': shellOn(ShellPage.exams),
+      'shell/analytics': shellOn(ShellPage.analytics),
+      'upload': plain(UploadScreen.new),
+      'chat': plain(ChatScreen.new),
+      'summaries': plain(SummariesScreen.new),
+      'flashcards': plain(FlashcardsScreen.new),
+      'quiz': plain(QuizScreen.new),
+      'quizResult': plain(
+        () => const QuizResultScreen(
+          correct: 8,
+          total: 10,
+          elapsedSeconds: 402,
+          missed: ['Q3 · Assigning R/S priority', 'Q7 · Meso compounds'],
+        ),
+      ),
+      'premium': plain(PremiumScreen.new),
+      'components': plain(ComponentsScreen.new),
     };
 
     for (final brightness in Brightness.values) {
@@ -208,11 +244,12 @@ void main() {
         testWidgets('${entry.key} · ${brightness.name}', (tester) async {
           _usePhoneSurface(tester);
           await tester.pumpWidget(
-            MaterialApp(
+            _app(
+              entry.value.home(),
               theme: brightness == Brightness.dark
                   ? AppTheme.dark
                   : AppTheme.light,
-              home: entry.value(),
+              shellPage: entry.value.shellPage,
             ),
           );
           await _settle(tester);
@@ -230,14 +267,14 @@ void main() {
         testWidgets('${entry.key} · textScale $scale', (tester) async {
           _usePhoneSurface(tester);
           await tester.pumpWidget(
-            MaterialApp(
-              theme: AppTheme.light,
+            _app(
+              entry.value.home(),
+              shellPage: entry.value.shellPage,
               builder: (context, child) => MediaQuery.withClampedTextScaling(
                 minScaleFactor: scale,
                 maxScaleFactor: scale,
                 child: child!,
               ),
-              home: entry.value(),
             ),
           );
           await _settle(tester);
@@ -250,7 +287,7 @@ void main() {
       testWidgets('${entry.key} · narrow phone', (tester) async {
         _usePhoneSurface(tester, size: _narrowPhone);
         await tester.pumpWidget(
-          MaterialApp(theme: AppTheme.light, home: entry.value()),
+          _app(entry.value.home(), shellPage: entry.value.shellPage),
         );
         await _settle(tester);
         expect(tester.takeException(), isNull);

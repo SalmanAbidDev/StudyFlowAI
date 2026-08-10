@@ -6,7 +6,7 @@
 
 import 'package:flutter/material.dart';
 
-import '../theme/theme.dart';
+import '../core/theme/theme.dart';
 
 /// Which accent a subject is painted with. Resolved against the theme so the
 /// same subject reads correctly in light and dark.
