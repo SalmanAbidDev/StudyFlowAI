@@ -1,8 +1,14 @@
 // lib/features/upload/upload_view_model.dart
+//
+// File picking uses `file_selector` (flutter.dev) rather than `file_picker`.
+// file_picker 11 skips applying the Kotlin Gradle Plugin on AGP 9 and relies
+// on built-in Kotlin without opting into it, so its Kotlin sources never
+// compile and the generated registrant fails to find FilePickerPlugin.
+// file_selector_android is migrated properly.
 
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/supabase_providers.dart';
@@ -60,28 +66,30 @@ class UploadViewModel extends Notifier<UploadState> {
   Future<bool> pickAndUpload() async {
     state = const UploadState(stage: UploadStage.picking);
 
-    final FilePickerResult? picked;
+    // The bucket's allowed_mime_types is the real gate; this list only keeps
+    // the picker from showing files the upload would then reject.
+    const documents = XTypeGroup(
+      label: 'Documents',
+      extensions: ['pdf', 'txt', 'md', 'docx', 'pptx', 'png', 'jpg', 'jpeg'],
+    );
+
+    final XFile? picked;
     try {
-      picked = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['pdf', 'txt', 'md', 'docx', 'pptx', 'png', 'jpg'],
-        withData: false,
-      );
+      picked = await openFile(acceptedTypeGroups: const [documents]);
     } catch (error) {
       state = UploadState(stage: UploadStage.failed, error: '$error');
       return false;
     }
 
-    final path = picked?.files.single.path;
-    if (path == null) {
+    if (picked == null) {
       // Cancelled — not an error, just back to where we started.
       state = const UploadState();
       return false;
     }
 
-    final file = File(path);
-    final name = picked!.files.single.name;
-    final size = picked.files.single.size;
+    final file = File(picked.path);
+    final name = picked.name;
+    final size = await picked.length();
 
     state = UploadState(
       stage: UploadStage.uploading,
@@ -102,7 +110,7 @@ class UploadViewModel extends Notifier<UploadState> {
             // The extension is noise in a title; the mime type already records it.
             title: name.replaceAll(RegExp(r'\.[^.]+$'), ''),
             storagePath: storagePath,
-            mimeType: picked.files.single.extension,
+            mimeType: picked.mimeType,
             byteSize: size,
           );
 

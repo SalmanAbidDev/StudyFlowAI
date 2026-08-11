@@ -22,7 +22,7 @@ connected to Supabase.
 | Flutter | 3.44.6 stable (Dart 3.12.2) |
 | State | `flutter_riverpod` ^3.4.2 |
 | Backend | `supabase_flutter` ^2.17.1 |
-| File picking | `file_picker` ^11.0.3, `path` ^1.9.1 |
+| File picking | `file_selector` (flutter.dev) — **not** `file_picker`, see §10 |
 | Lints | `flutter_lints` ^6.0.0 |
 
 **Health check** — both should be clean before and after any change:
@@ -363,15 +363,66 @@ Two harness notes:
 - **Search bar is decorative.** Tapping does nothing; no search is implemented.
 - **Premium is a paywall mockup.** No billing.
 
-**Android manifest:** `INTERNET` is declared (Flutter's debug manifest grants it
-implicitly, so release builds would otherwise fail where debug worked).
-`android:enableOnBackInvokedCallback` is **not** set — the log warning about it
-is benign, and enabling it changes back-gesture behaviour, so it was left as a
-decision for the owner.
+---
+
+## 10. Android build notes
+
+**This project is on AGP 9.0.1** (`android/settings.gradle.kts`), which is what
+Flutter 3.44's template generates. AGP 9 compiles Kotlin through **built-in
+Kotlin** rather than a separately applied Kotlin Gradle Plugin, and that breaks
+plugins which have not migrated.
+
+**Do not use `file_picker`.** Version 11.0.3 has this in its `android/build.gradle`:
+
+```groovy
+def isAgp9OrAbove = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION
+    .tokenize('.')[0].toInteger() >= 9
+apply plugin: 'com.android.library'
+if (!isAgp9OrAbove) { apply plugin: 'org.jetbrains.kotlin.android' }
+```
+
+On AGP 9 it skips KGP but never opts into built-in Kotlin, so its `.kt` sources
+are silently not compiled. The build then fails at Java link time with:
+
+```
+GeneratedPluginRegistrant.java:24: error: cannot find symbol
+  ...new com.mr.flutter.plugin.filepicker.FilePickerPlugin();
+symbol: class FilePickerPlugin
+```
+
+The misleading part is that the class *does* exist in the package — it just was
+never built. `flutter clean` does not help; this is not a stale artifact.
+
+`file_picker` **10.3.3** works (it always applies KGP) but emits the "plugins
+that apply Kotlin Gradle Plugin (KGP)" deprecation warning and will break on a
+future Flutter. Pinning to it is a stopgap, not a fix.
+
+**We use `file_selector` instead.** `file_selector_android` applies only
+`com.android.library` and configures a top-level `kotlin { }` block — the
+correct AGP 9 pattern — and it is flutter.dev first-party, so it tracks Flutter
+releases. API in `upload_view_model.dart`:
+
+```dart
+const documents = XTypeGroup(label: 'Documents', extensions: [...]);
+final XFile? picked = await openFile(acceptedTypeGroups: [documents]);
+// picked.path / .name / .mimeType / await picked.length()
+```
+
+`XTypeGroup` on Android needs `extensions` **or** `mimeTypes` non-empty or it
+throws `ArgumentError`.
+
+**General rule:** if a plugin fails with "cannot find symbol" on its own plugin
+class, check whether its `android/build.gradle` has migrated to built-in Kotlin
+before assuming a caching problem.
+
+**Manifest:** `INTERNET` is declared explicitly — Flutter's debug manifest grants
+it implicitly, so a release build would otherwise fail where debug worked.
+`android:enableOnBackInvokedCallback` is deliberately **not** set; the log
+warning about it is benign and enabling it changes back-gesture behaviour.
 
 ---
 
-## 10. Working notes for whoever picks this up
+## 11. Working notes for whoever picks this up
 
 - **PowerShell corrupts UTF-8 on rewrite.** `Get-Content -Raw` +
   `Set-Content -Encoding utf8` in PS 5.1 double-encodes em-dashes (`—` →
