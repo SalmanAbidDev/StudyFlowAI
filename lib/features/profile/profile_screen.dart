@@ -7,11 +7,11 @@ import '../../app/theme_mode_view_model.dart';
 import '../../core/navigation.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
+import '../analytics/analytics_screen.dart';
 import '../auth/auth_screen.dart';
 import '../auth/auth_view_model.dart';
 import '../home/home_view_model.dart';
 import '../premium/premium_screen.dart';
-import '../shell/shell_view_model.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -130,9 +130,9 @@ class ProfileScreen extends ConsumerWidget {
                           radius: AppRadius.md,
                           padding: const EdgeInsets.symmetric(
                               vertical: 12, horizontal: 8),
-                          onTap: () => ref
-                              .read(shellPageProvider.notifier)
-                              .go(ShellPage.analytics),
+                          onTap: () => Navigator.of(context).push(
+                            sfRoute(builder: (_) => const AnalyticsScreen()),
+                          ),
                           child: Column(
                             children: [
                               Text(
@@ -315,9 +315,9 @@ class ProfileScreen extends ConsumerWidget {
                     icon: Icons.show_chart_rounded,
                     label: 'Insights & analytics',
                     detail: 'Focus score, subject split',
-                    onTap: () => ref
-                        .read(shellPageProvider.notifier)
-                        .go(ShellPage.analytics),
+                    onTap: () => Navigator.of(context).push(
+                      sfRoute(builder: (_) => const AnalyticsScreen()),
+                    ),
                   ),
                   _SettingsRow(
                     icon: Icons.volume_up_outlined,
@@ -359,7 +359,7 @@ class ProfileScreen extends ConsumerWidget {
   }
 
   Future<void> _pickTheme(BuildContext context, WidgetRef ref) async {
-    final chosen = await _showSfSheet<ThemeMode>(
+    final chosen = await showSfSheet<ThemeMode>(
       context,
       (_) => const _ThemeSheet(),
     );
@@ -373,9 +373,15 @@ class ProfileScreen extends ConsumerWidget {
     // A sheet rather than a dialog: it matches the appearance picker, and a
     // destructive confirmation reads better rising from the same edge the rest
     // of the app's decisions come from.
-    final confirmed = await _showSfSheet<bool>(
+    final confirmed = await showSfSheet<bool>(
       context,
-      (_) => const _SignOutSheet(),
+      (_) => const SfConfirmSheet(
+        icon: Icons.logout_rounded,
+        title: 'Sign out?',
+        body: "You'll need to sign in again to reach your library. Nothing is "
+            'deleted.',
+        confirmLabel: 'Sign out',
+      ),
     );
 
     // Null when dismissed by tapping the scrim or swiping down.
@@ -389,145 +395,6 @@ class ProfileScreen extends ConsumerWidget {
     Navigator.of(context).pushAndRemoveUntil(
       sfRoute(builder: (_) => const AuthScreen()),
       (route) => false,
-    );
-  }
-}
-
-// ─── Sheets ───────────────────────────────────────────────────────────────
-
-/// Opens a sheet built from the design tokens rather than Material's defaults.
-///
-/// The transparent background is what lets the shell own its corners, border
-/// and grabber — and it is also why `showDragHandle` must be off: the theme
-/// enables it globally, and Flutter paints that handle *above* the builder, so
-/// against a transparent background it floats on the scrim beside ours.
-Future<T?> _showSfSheet<T>(BuildContext context, WidgetBuilder builder) {
-  return showModalBottomSheet<T>(
-    context: context,
-    backgroundColor: Colors.transparent,
-    barrierColor: AppColors.textPrimary.withValues(alpha: 0.45),
-    showDragHandle: false,
-    builder: builder,
-  );
-}
-
-/// The chrome every sheet in this app shares: canvas background, rounded top,
-/// hairline border, grabber, and bottom safe-area padding.
-class _SheetShell extends StatelessWidget {
-  const _SheetShell({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = context.scheme;
-
-    return Container(
-      decoration: BoxDecoration(
-        // The canvas colour, so cards inside sit on it as they do on any other
-        // screen. Using `surface` here would make them vanish into their own
-        // background.
-        color: Theme.of(context).scaffoldBackgroundColor,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        border: Border(top: BorderSide(color: scheme.outline)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Container(
-                  width: 38,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: scheme.outline,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-              child,
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Destructive confirmation. Coral throughout, because the accent is what
-/// tells you this one is not routine.
-class _SignOutSheet extends StatelessWidget {
-  const _SignOutSheet();
-
-  @override
-  Widget build(BuildContext context) {
-    final sf = context.sf;
-
-    return _SheetShell(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Centred rather than left-aligned like the picker: this is one
-          // focused question, not a list to scan.
-          Center(
-            child: SoftIconTile(
-              icon: Icons.logout_rounded,
-              color: sf.coralInk,
-              background: sf.coralSoft,
-              width: 56,
-              height: 56,
-              radius: 18,
-              iconSize: 26,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Sign out?',
-            textAlign: TextAlign.center,
-            style: AppTextStyles.heading.copyWith(
-              fontSize: 20,
-              letterSpacing: -0.5,
-              color: sf.ink,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            "You'll need to sign in again to reach your library. Nothing is "
-            'deleted.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontFamily: AppTextStyles.fontUi,
-              fontSize: 13,
-              height: 1.45,
-              color: sf.ink3,
-            ),
-          ),
-          const SizedBox(height: 22),
-          // Stacked rather than side by side: at a large text scale two
-          // buttons in a Row would each be squeezed to a few characters.
-          SfButton(
-            'Sign out',
-            variant: SfButtonVariant.coral,
-            size: SfButtonSize.lg,
-            expand: true,
-            onPressed: () => Navigator.of(context).pop(true),
-          ),
-          const SizedBox(height: 8),
-          SfButton(
-            'Cancel',
-            variant: SfButtonVariant.ghost,
-            size: SfButtonSize.lg,
-            expand: true,
-            onPressed: () => Navigator.of(context).pop(false),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -560,7 +427,7 @@ class _ThemeSheet extends ConsumerWidget {
     final sf = context.sf;
     final current = ref.watch(themeModeProvider);
 
-    return _SheetShell(
+    return SfSheetShell(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,

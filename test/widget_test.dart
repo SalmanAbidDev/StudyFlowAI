@@ -14,7 +14,9 @@ import 'package:ai_study_helper/core/theme/theme.dart';
 import 'package:ai_study_helper/data/supabase_providers.dart';
 import 'package:ai_study_helper/features/auth/auth_view_model.dart';
 import 'package:ai_study_helper/core/widgets/widgets.dart';
+import 'package:ai_study_helper/features/analytics/analytics_screen.dart';
 import 'package:ai_study_helper/features/auth/auth_screen.dart';
+import 'package:ai_study_helper/features/exams/exams_screen.dart';
 import 'package:ai_study_helper/features/chat/chat_screen.dart';
 import 'package:ai_study_helper/features/components/components_screen.dart';
 import 'package:ai_study_helper/features/flashcards/flashcards_screen.dart';
@@ -245,6 +247,64 @@ void main() {
     expect(find.text('System'), findsOneWidget);
   });
 
+  // System back at the shell root. `popRoute` is what the OS back button
+  // triggers, so this exercises the real path rather than a tapped widget.
+  testWidgets('system back returns to Home before offering to exit',
+      (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(
+      _app(const AppShell(), shellPage: ShellPage.profile),
+    );
+    await _settle(tester);
+    expect(find.text('Alex Morgan'), findsOneWidget);
+
+    // Off Home: back unwinds the tab, and must not offer to close.
+    await tester.binding.handlePopRoute();
+    await _settle(tester);
+    expect(find.text('Close StudyFlow?'), findsNothing);
+    expect(find.textContaining('Alex 👋'), findsOneWidget);
+
+    // On Home: back asks first.
+    await tester.binding.handlePopRoute();
+    await _settle(tester);
+    expect(find.text('Close StudyFlow?'), findsOneWidget);
+
+    // Cancelling leaves the app exactly where it was.
+    await tester.tap(find.text('Cancel'));
+    await _settle(tester);
+    expect(find.text('Close StudyFlow?'), findsNothing);
+    expect(find.byType(AppShell), findsOneWidget);
+  });
+
+  testWidgets('exams and insights open as routes, over the tab bar',
+      (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(_app(const AppShell()));
+    await _settle(tester);
+
+    // Home → Next exam card. It starts below the fold, and a ListView builds
+    // lazily even with explicit children, so it has to be scrolled into
+    // existence rather than just into view.
+    await tester.scrollUntilVisible(
+      find.text('Organic Chem Final'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await _settle(tester);
+    await tester.tap(find.text('Organic Chem Final'));
+    await _settle(tester);
+
+    expect(find.byType(ExamsScreen), findsOneWidget);
+    // A pushed route covers the shell, so its nav bar is gone.
+    expect(find.byType(FloatingNavBar), findsNothing);
+
+    // System back pops the route rather than leaving the app.
+    await tester.binding.handlePopRoute();
+    await _settle(tester);
+    expect(find.byType(ExamsScreen), findsNothing);
+    expect(find.byType(FloatingNavBar), findsOneWidget);
+  });
+
   testWidgets('a stored theme is applied on launch', (tester) async {
     _usePhoneSurface(tester);
     await tester.pumpWidget(
@@ -400,8 +460,9 @@ void main() {
       'shell/materials': shellOn(ShellPage.materials),
       'shell/planner': shellOn(ShellPage.planner),
       'shell/profile': shellOn(ShellPage.profile),
-      'shell/exams': shellOn(ShellPage.exams),
-      'shell/analytics': shellOn(ShellPage.analytics),
+      // Pushed routes now, not shell pages — render them directly.
+      'exams': plain(ExamsScreen.new),
+      'analytics': plain(AnalyticsScreen.new),
       'upload': plain(UploadScreen.new),
       'chat': plain(ChatScreen.new),
       'summaries': plain(SummariesScreen.new),

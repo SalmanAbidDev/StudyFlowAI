@@ -2,10 +2,11 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// The pages the shell can display. Exams and Insights are peers of the four
-/// tabs: the design draws the tab bar on them, so they live here rather than
-/// being pushed as routes.
-enum ShellPage { home, materials, planner, profile, exams, analytics }
+/// The four tab destinations. Nothing else belongs here — Exams and Insights
+/// were briefly members and had to be removed: a page inside the shell's
+/// IndexedStack gets no route, so it has no transition, keeps the tab bar over
+/// it, and leaves the system back button with nothing to pop.
+enum ShellPage { home, materials, planner, profile }
 
 /// The page the shell opens on. A separate provider rather than a widget
 /// argument so it can be seeded from a `ProviderScope` override — the shell

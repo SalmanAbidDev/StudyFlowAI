@@ -1,4 +1,6 @@
 // lib/features/analytics/analytics_screen.dart
+//
+// A pushed route, not a shell tab — see the note in exams_screen.dart.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,7 +9,6 @@ import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/subject.dart';
 import '../../data/repositories/analytics_repository.dart';
-import '../shell/shell_view_model.dart';
 import 'analytics_view_model.dart';
 
 class AnalyticsScreen extends ConsumerWidget {
@@ -20,11 +21,11 @@ class AnalyticsScreen extends ConsumerWidget {
     final range = ref.watch(analyticsRangeProvider);
     final stats = ref.watch(studyStatsProvider).value;
 
-    return ListView(
-      padding: EdgeInsets.only(
-        top: 12,
-        bottom: sfNavContentInset(context),
-      ),
+    return Scaffold(
+      body: SafeArea(
+        child: ListView(
+      // No nav pill to clear any more — this is a pushed route.
+      padding: const EdgeInsets.only(top: 12, bottom: 24),
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(22, 0, 22, 6),
@@ -33,8 +34,7 @@ class AnalyticsScreen extends ConsumerWidget {
               SfIconButton(
                 icon: Icons.arrow_back_rounded,
                 size: 38,
-                onPressed: () =>
-                    ref.read(shellPageProvider.notifier).go(ShellPage.profile),
+                onPressed: () => Navigator.of(context).maybePop(),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -334,6 +334,8 @@ class AnalyticsScreen extends ConsumerWidget {
           ),
         ),
       ],
+        ),
+      ),
     );
   }
 }

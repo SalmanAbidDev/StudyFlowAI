@@ -1,4 +1,8 @@
 // lib/features/exams/exams_screen.dart
+//
+// A pushed route, not a shell tab. It used to be an IndexedStack child, which
+// meant no page transition, the tab bar sitting on top of it, and the system
+// back button having nothing to pop.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,7 +12,6 @@ import '../../core/widgets/widgets.dart';
 import '../../data/models/exam.dart';
 import '../../data/models/subject.dart';
 import '../planner/planner_view_model.dart';
-import '../shell/shell_view_model.dart';
 
 class ExamsScreen extends ConsumerWidget {
   const ExamsScreen({super.key});
@@ -21,7 +24,9 @@ class ExamsScreen extends ConsumerWidget {
     final featured = exams.isEmpty ? null : exams.first;
     final rest = exams.skip(1).toList();
 
-    return Column(
+    return Scaffold(
+      body: SafeArea(
+        child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
@@ -31,8 +36,9 @@ class ExamsScreen extends ConsumerWidget {
               SfIconButton(
                 icon: Icons.arrow_back_rounded,
                 size: 38,
-                onPressed: () =>
-                    ref.read(shellPageProvider.notifier).go(ShellPage.planner),
+                // Pops back to whoever pushed it — Home or Planner — rather
+                // than always landing on one of them.
+                onPressed: () => Navigator.of(context).maybePop(),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -91,8 +97,8 @@ class ExamsScreen extends ConsumerWidget {
                     body: 'Add an exam date and Flow will plan around it.',
                   )
                 : ListView.separated(
-                    padding: EdgeInsets.fromLTRB(
-                        22, 0, 22, sfNavContentInset(context)),
+                    // No nav pill to clear any more — this is a pushed route.
+                    padding: const EdgeInsets.fromLTRB(22, 0, 22, 24),
                     itemCount: rest.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 8),
                     itemBuilder: (context, i) => _ExamRow(exam: rest[i]),
@@ -100,6 +106,8 @@ class ExamsScreen extends ConsumerWidget {
           ),
         ),
       ],
+        ),
+      ),
     );
   }
 }

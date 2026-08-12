@@ -20,6 +20,7 @@ by accident.
 | No `setState` anywhere in `lib/` | §4 |
 | No `Dialog`/`AlertDialog` — every modal is a bottom sheet | §6.1 |
 | No raw `MaterialPageRoute` — routes go through `sfRoute`/`sfModalRoute` | §3.2 |
+| `ShellPage` holds the four tabs and nothing else | §3.2 |
 | No raw `ListTile` in a sheet — it drags Material's typography in | §6.1 |
 | Tests never touch the network or a platform channel | §8 |
 | `flutter analyze` clean and all tests green | §1 |
@@ -48,7 +49,7 @@ connected to Supabase.
 
 ```bash
 flutter analyze     # expect: No issues found!
-flutter test        # expect: 97 tests, all passing
+flutter test        # expect: 99 tests, all passing
 ```
 
 **Running it** — credentials come in at build time, so a bare `flutter run`
@@ -188,6 +189,8 @@ lib/
     preferences.dart            PreferencesStore seam + preferencesProvider
     theme/                      design tokens (8 files, barrel: theme.dart)
     widgets/                    shared components (barrel: widgets.dart)
+      sf_sheet.dart             showSfSheet / SfSheetShell / SfConfirmSheet
+      async_states.dart         SfLoadingList / SfErrorView / SfEmptyView
     view_models.dart            ValueViewModel<T>, FlagViewModel
   data/
     demo_content.dart           only the Free-vs-Pro paywall matrix now
@@ -206,6 +209,11 @@ lib/
 17 feature folders: analytics, auth, chat, components, exams, flashcards, home,
 materials, onboarding, planner, premium, profile, quiz, shell, splash,
 summaries, upload.
+
+`features/shell/` is the tab scaffold, not a screen: `app_shell.dart` holds the
+IndexedStack, the floating nav bar and the system-back policy (§3.3);
+`shell_view_model.dart` holds `ShellPage`. Only four of the seventeen features
+are reachable from the tab bar — the rest are pushed.
 
 **Why flat inside each feature** rather than `view/` + `view_model/`
 subfolders: with one or two files each that is depth without information. The
@@ -269,6 +277,34 @@ Two gotchas:
   `cupertino/route.dart`; `app_theme.dart` imports it with a `show` clause.
 - Splash → Onboarding keeps its bespoke `PageRouteBuilder` fade. It is a brand
   moment, not a navigation step, and a horizontal slide would be wrong there.
+
+**Only the four tabs belong in the shell.** `ShellPage` has exactly `home`,
+`materials`, `planner`, `profile`. Exams and Insights were once extra
+`IndexedStack` children and had to be moved out, because a page with no route
+of its own:
+
+1. gets no transition — it just appears;
+2. keeps the floating tab bar drawn on top of it;
+3. gives the system back button nothing to pop, so **Android closes the app**;
+4. needs a hardcoded "back" target, which was wrong from half its entry points
+   (Exams always returned to Planner even when opened from Home).
+
+All four symptoms were reported as bugs. If a screen needs a back arrow, push
+it — do not add it to `ShellPage`.
+
+### 3.3 System back
+
+`AppShell` wraps itself in `PopScope(canPop: false)` and decides what back
+means at the root:
+
+- **Off Home** → return to Home. The tab bar is lateral navigation, so back
+  should unwind it before it unwinds the app.
+- **On Home** → an `SfConfirmSheet` asking before leaving. Confirm calls
+  `SystemNavigator.pop()`; cancel or scrim-dismiss stays put.
+
+`canPop: false` is required: the shell is the root route, so letting the pop
+through closes the app. Pushed routes on top of the shell are unaffected —
+the topmost route handles back, so Exams/Insights/Chat pop normally.
 
 ---
 
@@ -386,18 +422,22 @@ sign-out confirmation started as an `AlertDialog`, was rebuilt as a custom
 `Dialog`, and is now a sheet — sheets read as more considered, and having one
 modal idiom is worth more than picking the "correct" one per case.
 
-All of it lives in `features/profile/profile_screen.dart`:
+The primitives live in `core/widgets/sf_sheet.dart`:
 
-- **`_showSfSheet<T>()`** — the only way to open a sheet. Transparent
+- **`showSfSheet<T>()`** — the only way to open a sheet. Transparent
   background, branded scrim, `showDragHandle: false`.
-- **`_SheetShell`** — the shared chrome: canvas background, 28pt top corners,
-  hairline border, grabber, bottom safe-area padding. Both sheets wrap their
+- **`SfSheetShell`** — the shared chrome: canvas background, 28pt top corners,
+  hairline border, grabber, bottom safe-area padding. Every sheet wraps its
   content in it, so they cannot drift apart.
-- **`_ThemeSheet`** — left-aligned eyebrow + heading, then option cards with
-  `SoftIconTile` icons and a one-line blurb each.
-- **`_SignOutSheet`** — centred icon/heading/body (one focused question, not a
-  list to scan), coral `SoftIconTile`, and `SfButtonVariant.coral`, which
-  already carries the destructive glow.
+- **`SfConfirmSheet`** — a yes/no question: centred icon, heading, body, then
+  stacked confirm/cancel buttons. `destructive: true` (the default) makes it
+  coral. Used for sign-out and for the exit-app confirmation. Pops `true`/
+  `false`; a scrim or swipe dismiss yields **null**, which callers must treat
+  as "not confirmed".
+
+Feature-specific sheets stay with their feature — `_ThemeSheet` in
+`profile_screen.dart` is a picker rather than a confirmation, so it wraps
+`SfSheetShell` directly with a left-aligned eyebrow + heading and option cards.
 
 Specifics learned building these:
 
@@ -466,7 +506,7 @@ These were real device bugs, each with a general lesson:
 
 ## 8. Tests
 
-`test/widget_test.dart` — 97 tests:
+`test/widget_test.dart` — 99 tests:
 
 - Flow tests: splash → onboarding → auth → shell, empty-submit rejection,
   stored-session routing, tab switching, quiz run, flashcard flip, chat reply.
@@ -496,6 +536,13 @@ Harness notes:
 - Anything low on the Profile settings list (Sign out, for one) starts below the
   fold — call `tester.ensureVisible` before tapping. Once scrolled there, the
   profile hero is off-screen, so do not assert on the user's name.
+- **`ensureVisible` is not enough for Home.** `ListView(children: […])` still
+  builds lazily, so a card below the fold is not in the tree at all and
+  `ensureVisible` throws `Bad state: No element`. Use
+  `tester.scrollUntilVisible(finder, delta, scrollable: …)`, which scrolls
+  until the widget is *created*.
+- Use `tester.binding.handlePopRoute()` to exercise the **system** back button.
+  Tapping an in-app back widget does not go through `PopScope`.
 - `_scope()` takes `prefs:` for seeding stored preferences and `signedIn:` for
   starting with a session.
 
@@ -549,6 +596,9 @@ Harness notes:
   `grep showDialog lib/` returns nothing, and that is intentional.
 - **`setState`.** Zero occurrences in `lib/`. Controllers still live in
   `StatefulWidget`s (§4), but nothing calls `setState`.
+- **`ShellPage.exams` and `ShellPage.analytics`.** Exams and Insights are
+  pushed routes now, not tabs. Putting them back in the enum reintroduces four
+  reported bugs at once — see §3.2.
 
 ---
 

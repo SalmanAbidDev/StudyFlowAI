@@ -6,11 +6,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/navigation.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/study_block.dart';
 import '../../data/models/subject.dart';
-import '../shell/shell_view_model.dart';
+import '../exams/exams_screen.dart';
 import 'planner_view_model.dart';
 
 class PlannerScreen extends ConsumerWidget {
@@ -121,7 +122,9 @@ class PlannerScreen extends ConsumerWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(22, 0, 22, 12),
           child: GestureDetector(
-            onTap: () => ref.read(shellPageProvider.notifier).go(ShellPage.exams),
+            onTap: () => Navigator.of(context).push(
+              sfRoute(builder: (_) => const ExamsScreen()),
+            ),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(

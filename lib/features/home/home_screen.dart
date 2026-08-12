@@ -16,6 +16,7 @@ import '../materials/materials_view_model.dart';
 import '../planner/planner_view_model.dart';
 import '../summaries/summaries_view_model.dart';
 import '../chat/chat_screen.dart';
+import '../exams/exams_screen.dart';
 import '../flashcards/flashcards_screen.dart';
 import '../quiz/quiz_screen.dart';
 import '../shell/shell_view_model.dart';
@@ -92,8 +93,9 @@ class HomeScreen extends ConsumerWidget {
               children: [
                 Expanded(
                   child: _NextExamCard(
-                    onTap: () =>
-                        ref.read(shellPageProvider.notifier).go(ShellPage.exams),
+                    onTap: () => Navigator.of(context).push(
+                      sfRoute(builder: (_) => const ExamsScreen()),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
