@@ -1,0 +1,10 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="main.dart" type="FlutterRunConfigurationType" factoryName="Flutter">
+    <option name="filePath" value="$PROJECT_DIR$/lib/main.dart" />
+    <!-- Supabase credentials are supplied at build time rather than committed
+         in source. Without this argument the app throws a StateError on
+         startup by design. See CluadeWork.md §2. -->
+    <option name="additionalArgs" value="--dart-define-from-file=dart_define.json" />
+    <method />
+  </configuration>
+</component>

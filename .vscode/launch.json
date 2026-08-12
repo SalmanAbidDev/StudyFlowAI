@@ -1,0 +1,34 @@
+{
+  "// note": [
+    "Supabase credentials are supplied at build time rather than committed in",
+    "source, so every launch must pass --dart-define-from-file. Without it the",
+    "app throws a StateError on startup by design. See CluadeWork.md section 2.",
+    "dart_define.json is gitignored — copy dart_define.example.json if missing."
+  ],
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "StudyFlow AI (debug)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "toolArgs": ["--dart-define-from-file=dart_define.json"]
+    },
+    {
+      "name": "StudyFlow AI (profile)",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "profile",
+      "program": "lib/main.dart",
+      "toolArgs": ["--dart-define-from-file=dart_define.json"]
+    },
+    {
+      "name": "StudyFlow AI (release)",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "release",
+      "program": "lib/main.dart",
+      "toolArgs": ["--dart-define-from-file=dart_define.json"]
+    }
+  ]
+}

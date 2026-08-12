@@ -16,7 +16,12 @@ migrate_working_dir/
 *.iml
 *.ipr
 *.iws
-.idea/
+# `.idea/*` rather than `.idea/` so git still descends into the directory and
+# the negation below can take effect — an excluded *directory* is never walked.
+.idea/*
+# The run configuration carries --dart-define-from-file, without which the app
+# cannot start. That belongs to the project, not to one machine.
+!.idea/runConfigurations/
 
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line

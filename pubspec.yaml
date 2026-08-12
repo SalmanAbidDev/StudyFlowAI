@@ -38,6 +38,7 @@ dependencies:
   supabase_flutter: ^2.17.1
   path: ^1.9.1
   file_selector: ^1.1.0
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:

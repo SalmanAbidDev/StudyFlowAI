@@ -12,6 +12,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/navigation.dart';
 import '../../core/widgets/widgets.dart';
 import '../analytics/analytics_screen.dart';
 import '../chat/chat_screen.dart';
@@ -73,7 +74,7 @@ class AppShell extends ConsumerWidget {
                 onSelect: (tab) =>
                     ref.read(shellPageProvider.notifier).go(_pageFor(tab)),
                 onFlow: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ChatScreen()),
+                  sfRoute(builder: (_) => const ChatScreen()),
                 ),
               ),
             ),

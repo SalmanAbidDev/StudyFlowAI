@@ -4,7 +4,25 @@ Read this first if you are picking this project up cold. It covers what the app
 is, how it is put together, the decisions behind that structure, and the traps
 already discovered so you do not rediscover them.
 
-Last updated: 2026-08-10.
+Last updated: 2026-08-12.
+
+**Where the project stands.** Built from a design file as UI-only → restructured
+to MVVM + Riverpod → connected to Supabase (auth, 16 tables with RLS, storage)
+→ visual polish. It runs on device: sign-up, sign-in, real data on every screen,
+PDF upload to a private bucket, persisted theme. What is *not* built is listed
+in §9, with a reason for each — read that before assuming something is missing
+by accident.
+
+**Invariants worth not breaking.** Each is explained in the section named:
+
+| | |
+|---|---|
+| No `setState` anywhere in `lib/` | §4 |
+| No `Dialog`/`AlertDialog` — every modal is a bottom sheet | §6.1 |
+| No raw `MaterialPageRoute` — routes go through `sfRoute`/`sfModalRoute` | §3.2 |
+| No raw `ListTile` in a sheet — it drags Material's typography in | §6.1 |
+| Tests never touch the network or a platform channel | §8 |
+| `flutter analyze` clean and all tests green | §1 |
 
 ---
 
@@ -23,21 +41,34 @@ connected to Supabase.
 | State | `flutter_riverpod` ^3.4.2 |
 | Backend | `supabase_flutter` ^2.17.1 |
 | File picking | `file_selector` (flutter.dev) — **not** `file_picker`, see §10 |
+| Local storage | `shared_preferences` (theme choice only) |
 | Lints | `flutter_lints` ^6.0.0 |
 
 **Health check** — both should be clean before and after any change:
 
 ```bash
 flutter analyze     # expect: No issues found!
-flutter test        # expect: 93 tests, all passing
+flutter test        # expect: 97 tests, all passing
 ```
 
 **Running it** — credentials come in at build time, so a bare `flutter run`
-will throw a deliberate `StateError` telling you what to do:
+throws a deliberate `StateError` telling you what to do:
 
 ```bash
 flutter run --dart-define-from-file=dart_define.json
 ```
+
+**Pressing ▶ in the IDE needs the same argument**, or you get that same
+`StateError` at startup. Both run configurations are committed and already
+carry it:
+
+- Android Studio / IntelliJ — `.idea/runConfigurations/main_dart.xml`
+  (`additionalArgs`). Note `.gitignore` uses `.idea/*` plus a negation so this
+  one file is versioned while the rest of `.idea/` stays ignored.
+- VS Code — `.vscode/launch.json` (`toolArgs`), with debug/profile/release
+  variants.
+
+If you add a new run configuration, it needs the flag too.
 
 ---
 
@@ -47,11 +78,18 @@ flutter run --dart-define-from-file=dart_define.json
 · Postgres 17 · URL `https://cwriehotskhrekxyobvt.supabase.co`
 
 Credentials live in `dart_define.json` at the repo root, which is **gitignored**.
-`dart_define.example.json` is committed as the template. If the real file is
-missing on a new machine, copy the example and fill it from the dashboard
-(Project Settings → API keys). Use the **publishable** key (`sb_publishable_…`),
-never `service_role` — that one bypasses RLS entirely and must never appear in
-the app.
+`dart_define.example.json` is committed as the template. **On a fresh clone this
+file will not exist and the app will refuse to start** — copy the example and
+fill it from the dashboard (Project Settings → API keys). Use the **publishable**
+key (`sb_publishable_…`), never `service_role` — that one bypasses RLS entirely
+and must never appear in the app.
+
+```json
+{
+  "SUPABASE_URL": "https://cwriehotskhrekxyobvt.supabase.co",
+  "SUPABASE_PUBLISHABLE_KEY": "<publishable key from the dashboard>"
+}
+```
 
 The SDK deprecates `anonKey` in favour of `publishableKey`; `main.dart` uses the
 new parameter.
@@ -140,12 +178,14 @@ the function. Nothing else depends on it.
 
 ```
 lib/
-  main.dart                     runApp + Supabase.initialize only
+  main.dart                     init Supabase + SharedPreferences, then runApp
   app/
     app.dart                    StudyFlowApp (root MaterialApp)
-    theme_mode_view_model.dart  app-scoped: themeModeProvider
+    theme_mode_view_model.dart  app-scoped: themeModeProvider (persisted)
   core/
     config/supabase_config.dart --dart-define reader + startup assert
+    navigation.dart             sfRoute / sfModalRoute — see §3.2
+    preferences.dart            PreferencesStore seam + preferencesProvider
     theme/                      design tokens (8 files, barrel: theme.dart)
     widgets/                    shared components (barrel: widgets.dart)
     view_models.dart            ValueViewModel<T>, FlagViewModel
@@ -177,6 +217,58 @@ subfolders: with one or two files each that is depth without information. The
 - `shellPageProvider` → `features/shell/` because the shell owns navigation;
   Home, Planner, Profile, Exams and Insights all import it.
 - Everything else is feature-private.
+
+### 3.1 Persistence
+
+Only one thing is stored locally: the theme choice, under the key
+`ThemeModeViewModel.storageKey` (`'theme_mode'`), holding a `ThemeMode.name`.
+
+`main()` awaits `SharedPreferences.getInstance()` **before** `runApp` and
+injects it via `preferencesProvider.overrideWithValue(...)`. That is what makes
+`ThemeModeViewModel.build()` a synchronous read, so the very first frame is
+already the right theme — no flash of light before dark loads.
+
+**It is stored locally rather than on the `profiles` row on purpose.** The theme
+has to be correct on Splash and Auth, where there is no session to read a
+profile with. Adding cross-device sync later means writing *both*, not moving it.
+
+`PreferencesStore` is a deliberate seam (`lib/core/preferences.dart`) wrapping
+`SharedPreferences`, mirroring how the app depends on repositories rather than
+on `SupabaseClient`. Tests inject `FakePreferencesStore`, so the plugin and its
+platform channel never enter the suite. An unrecognised stored value falls back
+to `ThemeMode.system` rather than throwing.
+
+---
+
+### 3.2 Navigation
+
+All navigation is Cupertino — horizontal slide plus the swipe-from-the-left
+back gesture, on every platform. Nothing constructs a route inline; everything
+goes through `lib/core/navigation.dart`:
+
+| Helper | Transition | Use for |
+|---|---|---|
+| `sfRoute(builder: …)` | slide in from the right | screens with a **back arrow** |
+| `sfModalRoute(builder: …)` | slide up from the bottom | screens with a **close ✕** |
+
+**The affordance decides the helper.** Upload, Flashcards, Quiz, Quiz results
+and Premium have a ✕ and are modal; Chat, Summaries, Auth and the shell have a
+back arrow and are pushes. A modal deliberately has no back-swipe — it is
+dismissed by its own button.
+
+`AppTheme` also sets `pageTransitionsTheme` to `CupertinoPageTransitionsBuilder`
+for every `TargetPlatform`. The helpers do not consult it (a `CupertinoPageRoute`
+brings its own transition), so it is purely a safety net: any route added later
+as a `MaterialPageRoute`, or pushed from inside a package, still matches instead
+of standing out.
+
+Two gotchas:
+
+- **`CupertinoPageTransitionsBuilder` is not in `material.dart`** in Flutter
+  3.44 despite the Material docs referencing it. It lives in
+  `cupertino/route.dart`; `app_theme.dart` imports it with a `show` clause.
+- Splash → Onboarding keeps its bespoke `PageRouteBuilder` fade. It is a brand
+  moment, not a navigation step, and a horizontal slide would be wrong there.
 
 ---
 
@@ -262,8 +354,16 @@ context.isDark   // brightness == dark
 Components in `core/widgets/`: `SfButton` (has `busy`), `SfCard`, `SfChip`,
 `SfField`, `SfProgress` (nullable `value` = indeterminate), `SfRing`,
 `SfSkeleton`, `SfEyebrow`, `SfMono`, `SoftIconTile`, `FloatingNavBar`,
-`DashedBorderBox`, `MarkedText`, and the custom-painted brand marks
-(`SfMark`, `SfLogo`, `FlowOrb`, `GoogleGlyph`).
+`DashedBorderBox`, `MarkedText`, the async-state trio from §5, and the
+custom-painted brand marks (`SfMark`, `SfLogo`, `FlowOrb`, `GoogleGlyph`).
+
+The Flow orb in the nav bar hovers and pulses continuously (`_FlowButton` in
+`floating_nav.dart`). Two controllers on deliberately mismatched periods —
+2600 ms rise, 1750 ms glow — so they drift in and out of phase; a shared clock
+made it read as one mechanical throb. It honours reduce-motion by parking
+mid-travel. The orb is a **sibling** of the pill, not a child, because the
+pill's `ClipRRect` (which exists to confine the backdrop blur) would otherwise
+shear it off as it rises.
 
 Fonts: the design specifies Geist / Geist Mono. The TTFs are **not vendored**,
 so Flutter falls back to the platform font. Sizes, weights and tracking still
@@ -273,6 +373,53 @@ block ready if you drop the files into `assets/fonts`.
 Dark mode: `AppShadows.resolve()` returns an empty list in dark, where the
 design uses borders for separation instead. Several visual bugs are therefore
 light-mode-only.
+
+### 6.1 Never use raw Material surfaces
+
+`AlertDialog`, `ListTile` and a default `showModalBottomSheet` all bring
+Material's own typography, shape and button styling. Dropped into this app they
+read as if they came from a different product — this was reported as "doesn't
+look suitable with the rest of the application" and had to be redone.
+
+**Everything modal is a bottom sheet, and there are no `Dialog`s left.** The
+sign-out confirmation started as an `AlertDialog`, was rebuilt as a custom
+`Dialog`, and is now a sheet — sheets read as more considered, and having one
+modal idiom is worth more than picking the "correct" one per case.
+
+All of it lives in `features/profile/profile_screen.dart`:
+
+- **`_showSfSheet<T>()`** — the only way to open a sheet. Transparent
+  background, branded scrim, `showDragHandle: false`.
+- **`_SheetShell`** — the shared chrome: canvas background, 28pt top corners,
+  hairline border, grabber, bottom safe-area padding. Both sheets wrap their
+  content in it, so they cannot drift apart.
+- **`_ThemeSheet`** — left-aligned eyebrow + heading, then option cards with
+  `SoftIconTile` icons and a one-line blurb each.
+- **`_SignOutSheet`** — centred icon/heading/body (one focused question, not a
+  list to scan), coral `SoftIconTile`, and `SfButtonVariant.coral`, which
+  already carries the destructive glow.
+
+Specifics learned building these:
+
+- **A transparent sheet must also pass `showDragHandle: false`.** `AppTheme`
+  sets `showDragHandle: true`, and Flutter draws that handle *above* the
+  builder's content. With a transparent background it floats on the scrim
+  beside the sheet's own grabber — two handles, one apparently in mid-air.
+  `_showSfSheet` handles this; the theme default is left on so a sheet keeping
+  the standard surface still gets one. Rule: if you take over the background,
+  you take over the handle.
+- **A sheet body sits on `scaffoldBackgroundColor`, not `scheme.surface`.**
+  Cards inside it are `surface`; using `surface` for both makes the rows vanish
+  into their own background.
+- **A selected row needs a border, not just a fill.** In dark mode
+  `sf.indigoSoft` is nearly the surface colour, so a fill alone barely reads.
+- **Stack modal buttons, do not put them in a `Row`.** At text scale 1.3 two
+  side-by-side `SfButton`s each ellipsis to a few characters.
+- `SfButtonVariant.secondary` is `bg: scheme.surface`, so it is near-invisible
+  *on* a surface. Use `ghost` for a quiet action on a card.
+- **Write modal tests against text, not widget type.** The sign-out test
+  survived the `AlertDialog` → `Dialog` → sheet migration untouched because it
+  looks for `'Sign out?'` and `'Cancel'` rather than `find.byType(Dialog)`.
 
 ---
 
@@ -308,26 +455,36 @@ These were real device bugs, each with a general lesson:
 8. **Uppercase + letter-spacing measures wider than it looks** — trailing
    tracking counts. `SfEyebrow` wraps its text in `FittedBox(scaleDown)` and
    should be given a `Flexible` parent in constrained rows.
+9. **A loading placeholder can overflow the space it stands in for.**
+   `SfLoadingList` sizes its row count with `LayoutBuilder`, because it is used
+   both inside an `Expanded` (bounded) and as a list child (unbounded).
+10. **A fixed-height card cannot hold text at every scale.** The 360pt
+    flashcard faces let their middle band flex and scroll; at text scale 1.3
+    the question alone exceeded the card.
 
 ---
 
 ## 8. Tests
 
-`test/widget_test.dart` — 93 tests:
+`test/widget_test.dart` — 97 tests:
 
-- 6 flow tests (splash → onboarding → auth → shell, empty-submit rejection,
-  stored-session routing, tab switching, quiz run, flashcard flip, chat reply).
+- Flow tests: splash → onboarding → auth → shell, empty-submit rejection,
+  stored-session routing, tab switching, quiz run, flashcard flip, chat reply.
+- Modal tests: the appearance sheet opens/applies, the sign-out dialog opens and
+  cancels. **The layout sweep cannot reach these** — a sheet or dialog is not
+  built until something taps it open, so any new one needs its own test.
+- Theme persistence: a stored value is applied on launch; picking one writes it.
 - A layout sweep: every screen × both brightnesses × text scales 1.15 and 1.3 ×
   a narrow 340×760 phone. The narrow pass exists because a real device reported
   `smallestScreenWidthDp=359` and the suite was only testing 390.
 
-**The suite is hermetic — it never initialises Supabase and never touches the
-network.** The whole data layer is faked at the repository seam
-(`test/fakes/`). If you add a repository, add a fake and register it in
-`_scope()` or every screen test will fail with "You must initialize the
-supabase instance".
+**The suite is hermetic — it never initialises Supabase, never touches the
+network, and never loads the shared_preferences plugin.** Everything is faked at
+a seam (`test/fakes/`). If you add a repository, add a fake and register it in
+`_scope()` or every screen test will fail with "You must initialize the supabase
+instance".
 
-Two harness notes:
+Harness notes:
 
 - `pumpAndSettle` **cannot** be used: `FlowOrb` and `SfSkeleton` repeat
   indefinitely by design, so the tree never settles. Use the `_settle()` helper
@@ -336,6 +493,11 @@ Two harness notes:
   `expect(tester.takeException(), isNull)` with `expect(1, 1); // DEBUG` and
   re-run — `takeException` swallows the creator chain that names the file and
   line.
+- Anything low on the Profile settings list (Sign out, for one) starts below the
+  fold — call `tester.ensureVisible` before tapping. Once scrolled there, the
+  profile hero is off-screen, so do not assert on the user's name.
+- `_scope()` takes `prefs:` for seeding stored preferences and `signedIn:` for
+  starting with a session.
 
 ---
 
@@ -343,10 +505,10 @@ Two harness notes:
 
 **Not built, and each for a stated reason:**
 
-- **Google / Apple sign-in.** Needs provider credentials configured in the
-  Supabase dashboard (a Google Cloud OAuth client, an Apple Services ID). The
-  buttons currently say so plainly rather than pretending. Wiring them also
-  needs a deep-link intent-filter in `AndroidManifest.xml`.
+- **Google sign-in.** Needs a Google Cloud OAuth client configured in the
+  Supabase dashboard. The button currently says so plainly rather than
+  pretending. Wiring it also needs a deep-link intent-filter in
+  `AndroidManifest.xml`. (The Apple button was removed from the Auth screen.)
 - **The AI.** Chat replies still come from the scripted table in
   `chat_models.dart`; summaries and quizzes are seeded rows. The *transcript*
   is real (persisted to `chat_threads`/`chat_messages`). Wiring an LLM was kept
@@ -361,7 +523,32 @@ Two harness notes:
   for a single upload, so `SfProgress` takes a nullable value. A fabricated
   percentage would look better and be a lie.
 - **Search bar is decorative.** Tapping does nothing; no search is implemented.
+- **No pull-to-refresh anywhere.** Home and Materials both had a
+  `RefreshIndicator`; both were removed on request. Their providers are *not*
+  autoDispose (shell-resident), so data now refreshes only on restart or via an
+  explicit `invalidate` — upload invalidates the library, ticking a task
+  invalidates today's blocks. **Editing a block in the Planner will not update
+  Home's "Today" list** until something rebuilds it. Wire an invalidate if that
+  becomes visible.
 - **Premium is a paywall mockup.** No billing.
+
+**Deliberately removed — do not "restore" these thinking they were lost:**
+
+- **Profile → Connections group** (Calendar, Apple ID). Both rows were inert
+  with hard-coded "Connected"/"Linked" details.
+- **Profile → Component library row.** `ComponentsScreen` still exists and is
+  still covered by 6 sweep tests, so it works as a design reference — there is
+  just no route to it any more.
+- **Auth back button.** Auth is now a dead end: arriving from Onboarding leaves
+  no way back to the value story. Normal for a sign-in screen; noted in case it
+  should change.
+- **Auth "Continue with Apple" button.** Only Google remains.
+- **Home / Materials pull-to-refresh** — see the bullet above for what that
+  costs.
+- **Every `Dialog` and `AlertDialog`.** All modals are bottom sheets now (§6.1).
+  `grep showDialog lib/` returns nothing, and that is intentional.
+- **`setState`.** Zero occurrences in `lib/`. Controllers still live in
+  `StatefulWidget`s (§4), but nothing calls `setState`.
 
 ---
 

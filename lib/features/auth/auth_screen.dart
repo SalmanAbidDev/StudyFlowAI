@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/navigation.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../shell/app_shell.dart';
@@ -42,7 +43,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     if (!ok || !mounted) return;
 
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const AppShell()),
+      sfRoute(builder: (_) => const AppShell()),
       (route) => false,
     );
   }
@@ -87,20 +88,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: SfIconButton(
-                  icon: Icons.arrow_back_rounded,
-                  size: 36,
-                  onPressed: () => Navigator.of(context).maybePop(),
-                ),
-              ),
-            ),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(28, 32, 28, 8),
+                // Top padding absorbs what the removed back-button row used to
+                // contribute, so the logo keeps its distance from the notch.
+                padding: const EdgeInsets.fromLTRB(28, 44, 28, 8),
                 children: [
                   const SfLogo(size: 26),
                   const SizedBox(height: 28),
@@ -191,18 +183,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     ],
                   ),
                   const SizedBox(height: 24),
-                  _SocialButton(
-                    label: 'Continue with Apple',
-                    background: context.isDark ? Colors.white : Colors.black,
-                    foreground: context.isDark ? Colors.black : Colors.white,
-                    onTap: () => _socialUnavailable('Apple'),
-                    child: Icon(
-                      Icons.apple,
-                      size: 22,
-                      color: context.isDark ? Colors.black : Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
                   _SocialButton(
                     label: 'Continue with Google',
                     background: scheme.surface,

@@ -7,6 +7,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/navigation.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/quiz.dart';
@@ -55,8 +56,10 @@ class _QuizBody extends ConsumerWidget {
     await ref.read(quizProvider.notifier).recordAttempt();
     if (!context.mounted) return;
 
+    // Modal like the quiz it replaces: the results screen is dismissed with a
+    // close button, not a back arrow, so it must not slide in sideways.
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
+      sfModalRoute(
         builder: (_) => QuizResultScreen(
           correct: run.correct,
           total: run.total,

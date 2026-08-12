@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../core/navigation.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import 'quiz_screen.dart';
@@ -226,7 +227,7 @@ class QuizResultScreen extends StatelessWidget {
                       icon: Icons.refresh_rounded,
                       expand: true,
                       onPressed: () => Navigator.of(context).pushReplacement(
-                        MaterialPageRoute(builder: (_) => const QuizScreen()),
+                        sfModalRoute(builder: (_) => const QuizScreen()),
                       ),
                     ),
                   ),

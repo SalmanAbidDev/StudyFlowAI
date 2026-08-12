@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/navigation.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/summary_section.dart';
@@ -163,7 +164,7 @@ class SummariesScreen extends ConsumerWidget {
                       icon: Icons.style_outlined,
                       expand: true,
                       onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
+                        sfModalRoute(
                             builder: (_) => const FlashcardsScreen()),
                       ),
                     ),
@@ -175,7 +176,7 @@ class SummariesScreen extends ConsumerWidget {
                       icon: Icons.help_outline_rounded,
                       expand: true,
                       onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const QuizScreen()),
+                        sfModalRoute(builder: (_) => const QuizScreen()),
                       ),
                     ),
                   ),

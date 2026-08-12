@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ai_study_helper/app/app.dart';
+import 'package:ai_study_helper/app/theme_mode_view_model.dart';
 import 'package:ai_study_helper/core/theme/theme.dart';
 import 'package:ai_study_helper/data/supabase_providers.dart';
 import 'package:ai_study_helper/features/auth/auth_view_model.dart';
@@ -27,7 +28,10 @@ import 'package:ai_study_helper/features/splash/splash_screen.dart';
 import 'package:ai_study_helper/features/summaries/summaries_screen.dart';
 import 'package:ai_study_helper/features/upload/upload_screen.dart';
 
+import 'package:ai_study_helper/core/preferences.dart';
+
 import 'fakes/fake_auth_repository.dart';
+import 'fakes/fake_preferences.dart';
 import 'fakes/fake_repositories.dart';
 
 /// Give every test an iPhone-sized surface — these are phone layouts, and the
@@ -65,9 +69,11 @@ Widget _scope({
   required Widget child,
   ShellPage? shellPage,
   bool signedIn = false,
+  Map<String, String>? prefs,
 }) {
   return ProviderScope(
     overrides: [
+      preferencesProvider.overrideWithValue(FakePreferencesStore(prefs)),
       authRepositoryProvider
           .overrideWithValue(FakeAuthRepository(signedIn: signedIn)),
       // The data layer is faked wholesale. `currentUserIdProvider` normally
@@ -93,10 +99,12 @@ Widget _app(
   ShellPage? shellPage,
   TransitionBuilder? builder,
   bool signedIn = false,
+  Map<String, String>? prefs,
 }) {
   return _scope(
     shellPage: shellPage,
     signedIn: signedIn,
+    prefs: prefs,
     child: MaterialApp(
       theme: theme ?? AppTheme.light,
       builder: builder,
@@ -106,8 +114,8 @@ Widget _app(
 }
 
 /// The real app widget, which brings its own MaterialApp.
-Widget _wholeApp({bool signedIn = false}) =>
-    _scope(signedIn: signedIn, child: const StudyFlowApp());
+Widget _wholeApp({bool signedIn = false, Map<String, String>? prefs}) =>
+    _scope(signedIn: signedIn, prefs: prefs, child: const StudyFlowApp());
 
 void main() {
   testWidgets('splash shows the brand, then advances to onboarding',
@@ -210,6 +218,100 @@ void main() {
     await tester.tap(find.text('Profile'));
     await _settle(tester);
     expect(find.text('Alex Morgan'), findsOneWidget);
+  });
+
+  // The layout sweep cannot reach a bottom sheet — it is not built until
+  // something taps it open.
+  testWidgets('the appearance sheet opens and applies a theme',
+      (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(_app(const AppShell(), shellPage: ShellPage.profile));
+    await _settle(tester);
+
+    await tester.tap(find.text('Appearance'));
+    await _settle(tester);
+
+    expect(find.text('How StudyFlow looks'), findsOneWidget);
+    for (final label in ['System', 'Light', 'Dark']) {
+      expect(find.text(label), findsWidgets);
+    }
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('Follows your device setting'));
+    await _settle(tester);
+
+    // Sheet dismissed, and the Appearance row reflects the choice.
+    expect(find.text('How StudyFlow looks'), findsNothing);
+    expect(find.text('System'), findsOneWidget);
+  });
+
+  testWidgets('a stored theme is applied on launch', (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(
+      _wholeApp(prefs: {ThemeModeViewModel.storageKey: 'dark'}),
+    );
+    await _settle(tester);
+
+    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(app.themeMode, ThemeMode.dark);
+  });
+
+  testWidgets('picking a theme writes it to preferences', (tester) async {
+    _usePhoneSurface(tester);
+    final store = FakePreferencesStore();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [preferencesProvider.overrideWithValue(store)],
+        child: Consumer(
+          builder: (context, ref, _) => MaterialApp(
+            home: TextButton(
+              onPressed: () =>
+                  ref.read(themeModeProvider.notifier).select(ThemeMode.dark),
+              child: Text(themeModeLabel(ref.watch(themeModeProvider))),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('System'), findsOneWidget);
+    expect(store.getString(ThemeModeViewModel.storageKey), isNull);
+
+    await tester.tap(find.byType(TextButton));
+    await tester.pump();
+
+    expect(find.text('Dark'), findsOneWidget);
+    expect(store.getString(ThemeModeViewModel.storageKey), 'dark');
+  });
+
+  testWidgets('the sign-out dialog can be dismissed without signing out',
+      (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(
+      _app(const AppShell(), shellPage: ShellPage.profile, signedIn: true),
+    );
+    await _settle(tester);
+
+    // The row is the last item on a long settings list.
+    await tester.ensureVisible(find.text('Sign out'));
+    await _settle(tester);
+    await tester.tap(find.text('Sign out'));
+    await _settle(tester);
+
+    expect(find.text('Sign out?'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('Cancel'));
+    await _settle(tester);
+
+    // Dialog gone, still on Profile — the hero has scrolled away, so assert on
+    // the settings row rather than the name — and still signed in.
+    expect(find.text('Sign out?'), findsNothing);
+    expect(find.text('Sign out'), findsOneWidget);
+    expect(find.byType(AppShell), findsOneWidget);
+    expect(find.byType(AuthScreen), findsNothing);
   });
 
   testWidgets('quiz reveals the answer on tap and scores the run',

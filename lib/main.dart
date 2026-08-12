@@ -14,19 +14,35 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app/app.dart';
 import 'core/config/supabase_config.dart';
+import 'core/preferences.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SupabaseConfig.assertConfigured();
 
-  await Supabase.initialize(
-    url: SupabaseConfig.url,
-    publishableKey: SupabaseConfig.publishableKey,
-  );
+  // Both are awaited before the first frame: Supabase so a stored session is
+  // restored in time for Splash to route on it, preferences so the saved theme
+  // is applied without a flash of the wrong one.
+  final results = await Future.wait([
+    Supabase.initialize(
+      url: SupabaseConfig.url,
+      publishableKey: SupabaseConfig.publishableKey,
+    ),
+    SharedPreferences.getInstance(),
+  ]);
+  final prefs = results[1] as SharedPreferences;
 
-  runApp(const ProviderScope(child: StudyFlowApp()));
+  runApp(
+    ProviderScope(
+      overrides: [
+        preferencesProvider.overrideWithValue(PreferencesStore(prefs)),
+      ],
+      child: const StudyFlowApp(),
+    ),
+  );
 }

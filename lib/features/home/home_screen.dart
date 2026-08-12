@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/navigation.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/study_block.dart';
@@ -34,15 +35,7 @@ class HomeScreen extends ConsumerWidget {
     // returning users pay one no-op call.
     ref.watch(starterContentProvider);
 
-    return RefreshIndicator(
-      onRefresh: () async {
-        ref
-          ..invalidate(profileProvider)
-          ..invalidate(todayBlocksProvider)
-          ..invalidate(resumeMaterialProvider)
-          ..invalidate(upcomingExamsProvider);
-      },
-      child: ListView(
+    return ListView(
       padding: EdgeInsets.only(
         top: 14,
         bottom: sfNavContentInset(context),
@@ -65,7 +58,7 @@ class HomeScreen extends ConsumerWidget {
               const SectionHeader('Pick up where you left off'),
               _ResumeCard(
                 onResume: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SummariesScreen()),
+                  sfRoute(builder: (_) => const SummariesScreen()),
                 ),
               ),
             ],
@@ -107,7 +100,7 @@ class HomeScreen extends ConsumerWidget {
                 Expanded(
                   child: _FlowSuggestionCard(
                     onStart: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const ChatScreen()),
+                      sfRoute(builder: (_) => const ChatScreen()),
                     ),
                   ),
                 ),
@@ -158,7 +151,7 @@ class HomeScreen extends ConsumerWidget {
                             .read(selectedMaterialProvider.notifier)
                             .update(d.id);
                         Navigator.of(context).push(
-                          MaterialPageRoute(
+                          sfRoute(
                               builder: (_) => const SummariesScreen()),
                         );
                       },
@@ -202,7 +195,6 @@ class HomeScreen extends ConsumerWidget {
           ),
         ),
       ],
-      ),
     );
   }
 
@@ -296,7 +288,7 @@ class HomeScreen extends ConsumerWidget {
         color: context.scheme.primary,
         background: sf.indigoSoft,
         onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const UploadScreen()),
+              sfModalRoute(builder: (_) => const UploadScreen()),
             ),
       ),
       (
@@ -305,7 +297,7 @@ class HomeScreen extends ConsumerWidget {
         color: sf.violetInk,
         background: sf.lavenderSoft,
         onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const FlashcardsScreen()),
+              sfModalRoute(builder: (_) => const FlashcardsScreen()),
             ),
       ),
       (
@@ -314,7 +306,7 @@ class HomeScreen extends ConsumerWidget {
         color: sf.coralInk,
         background: sf.coralSoft,
         onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const QuizScreen()),
+              sfModalRoute(builder: (_) => const QuizScreen()),
             ),
       ),
       (
@@ -323,7 +315,7 @@ class HomeScreen extends ConsumerWidget {
         color: sf.emeraldInk,
         background: sf.emeraldSoft,
         onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const ChatScreen()),
+              sfRoute(builder: (_) => const ChatScreen()),
             ),
       ),
     ];

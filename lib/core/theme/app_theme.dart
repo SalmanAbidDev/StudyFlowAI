@@ -12,6 +12,9 @@
 //     themeMode:  ThemeMode.system,
 //   );
 
+// CupertinoPageTransitionsBuilder lives in cupertino/route.dart, not in
+// material's page_transitions_theme.dart where the docs reference it from.
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -113,6 +116,18 @@ class AppTheme {
       canvasColor: scheme.surface,
       dividerColor: scheme.outline,
       splashFactory: InkSparkle.splashFactory,
+
+      // Navigation goes through `sfRoute`/`sfModalRoute` (lib/core/navigation),
+      // which build CupertinoPageRoutes directly and ignore this. It is set
+      // anyway as the safety net: any route created some other way — a
+      // MaterialPageRoute added later, or one pushed from a package — still
+      // gets the same horizontal slide instead of standing out.
+      pageTransitionsTheme: PageTransitionsTheme(
+        builders: {
+          for (final platform in TargetPlatform.values)
+            platform: const CupertinoPageTransitionsBuilder(),
+        },
+      ),
 
       extensions: <ThemeExtension<dynamic>>[
         isDark ? SfColors.dark : SfColors.light,

@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/navigation.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/study_material.dart';
@@ -42,7 +43,7 @@ class MaterialsScreen extends ConsumerWidget {
                 iconSize: 20,
                 filled: true,
                 onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const UploadScreen()),
+                  sfModalRoute(builder: (_) => const UploadScreen()),
                 ),
               ),
             ],
@@ -86,19 +87,16 @@ class MaterialsScreen extends ConsumerWidget {
             data: (_) => items.isEmpty
                 ? _EmptyLibrary(
                     onUpload: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const UploadScreen()),
+                      sfModalRoute(builder: (_) => const UploadScreen()),
                     ),
                   )
-                : RefreshIndicator(
-                    onRefresh: () async => ref.invalidate(materialsProvider),
-                    child: ListView.separated(
-                      padding: EdgeInsets.fromLTRB(
-                          22, 0, 22, sfNavContentInset(context)),
-                      itemCount: items.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 10),
-                      itemBuilder: (context, i) =>
-                          _MaterialRow(material: items[i]),
-                    ),
+                : ListView.separated(
+                    padding: EdgeInsets.fromLTRB(
+                        22, 0, 22, sfNavContentInset(context)),
+                    itemCount: items.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 10),
+                    itemBuilder: (context, i) =>
+                        _MaterialRow(material: items[i]),
                   ),
           ),
         ),
@@ -176,7 +174,7 @@ class _MaterialRow extends ConsumerWidget {
         // screen doesn't have to guess.
         ref.read(selectedMaterialProvider.notifier).update(material.id);
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const SummariesScreen()),
+          sfRoute(builder: (_) => const SummariesScreen()),
         );
       },
       child: Row(
