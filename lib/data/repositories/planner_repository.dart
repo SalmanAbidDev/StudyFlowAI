@@ -19,6 +19,28 @@ class PlannerRepository {
       '${date.month.toString().padLeft(2, '0')}-'
       '${date.day.toString().padLeft(2, '0')}';
 
+  /// Every block in an inclusive date range, used by the week strip. Returns
+  /// the raw rows grouped by day rather than one query per day.
+  Future<Map<DateTime, List<StudyBlock>>> blocksBetween(
+    DateTime from,
+    DateTime to,
+  ) async {
+    final rows = await _client
+        .from('study_blocks')
+        .select('$_blockSelect, scheduled_on')
+        .gte('scheduled_on', _day(from))
+        .lte('scheduled_on', _day(to))
+        .order('position');
+
+    final grouped = <DateTime, List<StudyBlock>>{};
+    for (final row in rows) {
+      final date = DateTime.parse(row['scheduled_on'] as String);
+      final key = DateTime(date.year, date.month, date.day);
+      (grouped[key] ??= []).add(StudyBlock.fromRow(row));
+    }
+    return grouped;
+  }
+
   Future<List<StudyBlock>> blocksOn(DateTime day) async {
     final rows = await _client
         .from('study_blocks')

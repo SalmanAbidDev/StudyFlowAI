@@ -151,12 +151,13 @@ class SfEmptyView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sf = context.sf;
+    // Deliberately not in an SfCard. A card is a container for *something*;
+    // wrapping "there is nothing here" in one draws a box around an absence
+    // and makes the emptiness look like content.
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: SfCard(
-          padding: const EdgeInsets.all(24),
-          child: Column(
+        padding: const EdgeInsets.all(32),
+        child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               SoftIconTile(
@@ -168,24 +169,25 @@ class SfEmptyView extends StatelessWidget {
                 radius: 18,
                 iconSize: 26,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               Text(
                 title,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: 15,
                   fontWeight: FontWeight.w700,
+                  letterSpacing: -0.2,
                   color: sf.ink,
                 ),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 6),
               Text(
                 body,
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, height: 1.4, color: sf.ink3),
+                style: TextStyle(fontSize: 13, height: 1.45, color: sf.ink3),
               ),
               if (actionLabel != null) ...[
-                const SizedBox(height: 14),
+                const SizedBox(height: 16),
                 SfButton(
                   actionLabel!,
                   size: SfButtonSize.sm,
@@ -193,7 +195,6 @@ class SfEmptyView extends StatelessWidget {
                 ),
               ],
             ],
-          ),
         ),
       ),
     );

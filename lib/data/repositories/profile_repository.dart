@@ -22,13 +22,18 @@ class ProfileRepository {
         .update({'full_name': fullName}).eq('id', _client.auth.currentUser!.id);
   }
 
-  Future<List<Achievement>> achievements() async {
+  /// Which badges this user has earned, keyed by code. The catalogue lives in
+  /// the app; this is only the progress against it.
+  Future<Map<String, DateTime>> earnedAchievements() async {
     final rows = await _client
         .from('achievements')
-        // Earned badges first, matching how the rail reads.
-        .select()
-        .order('earned_at', ascending: false, nullsFirst: false);
-    return rows.map(Achievement.fromRow).toList();
+        .select('code, earned_at')
+        .not('earned_at', 'is', null);
+
+    return {
+      for (final row in rows)
+        row['code'] as String: DateTime.parse(row['earned_at'] as String),
+    };
   }
 
   /// Fills a brand-new account with a walkable starter library. Idempotent in

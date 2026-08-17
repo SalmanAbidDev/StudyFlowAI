@@ -13,16 +13,32 @@ import '../summaries/summaries_view_model.dart';
 import '../upload/upload_screen.dart';
 import 'materials_view_model.dart';
 
-class MaterialsScreen extends ConsumerWidget {
+class MaterialsScreen extends ConsumerStatefulWidget {
   const MaterialsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MaterialsScreen> createState() => _MaterialsScreenState();
+}
+
+/// Stateful only for the search field's controller — the query itself is a
+/// provider, because the filtering happens in the view model.
+class _MaterialsScreenState extends ConsumerState<MaterialsScreen> {
+  final _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final sf = context.sf;
     final filter = ref.watch(materialsFilterProvider);
     final filters = ref.watch(libraryFiltersProvider);
     final library = ref.watch(materialsProvider);
     final items = ref.watch(visibleMaterialsProvider);
+    final filteredToNothing = ref.watch(materialsFilteredToNothingProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -53,7 +69,12 @@ class MaterialsScreen extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(22, 0, 22, 12),
           child: SfSearchBar(
             hint: 'Search ${library.value?.length ?? 0} documents…',
-            onTap: () {},
+            controller: _search,
+            onChanged: ref.read(materialsQueryProvider.notifier).update,
+            onClear: () {
+              _search.clear();
+              ref.read(materialsQueryProvider.notifier).update('');
+            },
           ),
         ),
         // Content-sized so the pills grow with the text rather than
@@ -85,10 +106,40 @@ class MaterialsScreen extends ConsumerWidget {
               onRetry: () => ref.invalidate(materialsProvider),
             ),
             data: (_) => items.isEmpty
-                ? _EmptyLibrary(
-                    onUpload: () => Navigator.of(context).push(
-                      sfModalRoute(builder: (_) => const UploadScreen()),
+                // The bottom inset offsets the centred state above the nav
+                // pill, so it reads as centred in the space actually visible.
+                ? Padding(
+                    padding: EdgeInsets.only(
+                      bottom: sfNavContentInset(context, extra: 0),
                     ),
+                    // "Nothing matched" and "nothing here yet" are different
+                    // problems with different fixes.
+                    child: filteredToNothing
+                        ? SfEmptyView(
+                            icon: Icons.search_off_rounded,
+                            title: 'No matches',
+                            body: 'Nothing in your library matches that. Try '
+                                'another word, or clear the filter.',
+                            actionLabel: 'Clear search',
+                            onAction: () {
+                              _search.clear();
+                              ref
+                                  .read(materialsQueryProvider.notifier)
+                                  .update('');
+                              ref
+                                  .read(materialsFilterProvider.notifier)
+                                  .update(0);
+                            },
+                          )
+                        : SfEmptyView(
+                            icon: Icons.description_outlined,
+                            title: 'Nothing here yet',
+                            body: 'Upload a PDF or paste your notes to begin.',
+                            actionLabel: 'Upload',
+                            onAction: () => Navigator.of(context).push(
+                              sfModalRoute(builder: (_) => const UploadScreen()),
+                            ),
+                          ),
                   )
                 : ListView.separated(
                     padding: EdgeInsets.fromLTRB(
@@ -162,6 +213,56 @@ class _MaterialRow extends ConsumerWidget {
 
   final StudyMaterial material;
 
+  void _open(BuildContext context, WidgetRef ref) {
+    // Tell Summaries which document to open before pushing it, so the screen
+    // doesn't have to guess.
+    ref.read(selectedMaterialProvider.notifier).update(material.id);
+    Navigator.of(context).push(
+      sfRoute(builder: (_) => const SummariesScreen()),
+    );
+  }
+
+  Future<void> _showActions(BuildContext context, WidgetRef ref) async {
+    final action = await showSfSheet<_MaterialAction>(
+      context,
+      (_) => _MaterialActionsSheet(material: material),
+    );
+    if (action == null || !context.mounted) return;
+
+    switch (action) {
+      case _MaterialAction.open:
+        _open(context, ref);
+
+      case _MaterialAction.delete:
+        final confirmed = await showSfSheet<bool>(
+          context,
+          (_) => SfConfirmSheet(
+            icon: Icons.delete_outline_rounded,
+            title: 'Delete this material?',
+            body: material.storagePath == null
+                ? '"${material.title}" and its summary, deck and quizzes will '
+                    'be removed. This cannot be undone.'
+                : '"${material.title}", its uploaded file, and its summary, '
+                    'deck and quizzes will be removed. This cannot be undone.',
+            confirmLabel: 'Delete',
+          ),
+        );
+        if (confirmed != true || !context.mounted) return;
+
+        final messenger = ScaffoldMessenger.of(context);
+        try {
+          await ref.read(deleteMaterialProvider)(material);
+          messenger.showSnackBar(
+            SnackBar(content: Text('Deleted "${material.title}".')),
+          );
+        } catch (_) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text("Couldn't delete that. Try again.")),
+          );
+        }
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
@@ -169,14 +270,8 @@ class _MaterialRow extends ConsumerWidget {
 
     return SfCard(
       padding: const EdgeInsets.all(14),
-      onTap: () {
-        // Tell Summaries which document to open before pushing it, so the
-        // screen doesn't have to guess.
-        ref.read(selectedMaterialProvider.notifier).update(material.id);
-        Navigator.of(context).push(
-          sfRoute(builder: (_) => const SummariesScreen()),
-        );
-      },
+      onTap: () => _open(context, ref),
+      onLongPress: () => _showActions(context, ref),
       child: Row(
         children: [
           SoftIconTile(
@@ -240,57 +335,141 @@ class _MaterialRow extends ConsumerWidget {
   }
 }
 
-class _EmptyLibrary extends StatelessWidget {
-  const _EmptyLibrary({required this.onUpload});
 
-  final VoidCallback onUpload;
+// ─── Long-press actions ───────────────────────────────────────────────────
+
+enum _MaterialAction { open, delete }
+
+/// What a long-press on a library row offers. Returns the chosen action and
+/// closes; the caller runs it, so confirmation lives outside this sheet.
+class _MaterialActionsSheet extends StatelessWidget {
+  const _MaterialActionsSheet({required this.material});
+
+  final StudyMaterial material;
 
   @override
   Widget build(BuildContext context) {
     final sf = context.sf;
-    return Center(
-      child: Padding(
-        // Offsets the centred empty state above the pill so it reads as
-        // vertically centred in the space the user can actually see.
-        padding: EdgeInsets.fromLTRB(
-            22, 0, 22, sfNavContentInset(context, extra: 0)),
-        child: SfCard(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SoftIconTile(
-                icon: Icons.description_outlined,
-                color: context.scheme.primary,
-                background: sf.indigoSoft,
-                width: 56,
-                height: 56,
-                radius: 18,
-                iconSize: 26,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Nothing here yet',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: sf.ink,
+
+    return SfSheetShell(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Naming the document is the whole point: a destructive menu that
+          // does not say what it acts on is how people delete the wrong thing.
+          Padding(
+            padding: const EdgeInsets.only(left: 2, bottom: 14),
+            child: Row(
+              children: [
+                SoftIconTile(
+                  icon: material.icon,
+                  color: material.accent.color(context),
+                  width: 40,
+                  height: 40,
+                  radius: 12,
+                  iconSize: 20,
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Upload a PDF or paste your notes to begin.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: sf.ink3),
-              ),
-              const SizedBox(height: 14),
-              SfButton(
-                'Upload',
-                size: SfButtonSize.sm,
-                icon: Icons.file_upload_outlined,
-                onPressed: onUpload,
-              ),
-            ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        material.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: AppTextStyles.fontUi,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.2,
+                          color: sf.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        material.meta,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: sf.ink3),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _SheetAction(
+            icon: Icons.menu_book_outlined,
+            label: 'Open',
+            onTap: () => Navigator.of(context).pop(_MaterialAction.open),
+          ),
+          const SizedBox(height: 8),
+          _SheetAction(
+            icon: Icons.delete_outline_rounded,
+            label: 'Delete',
+            destructive: true,
+            onTap: () => Navigator.of(context).pop(_MaterialAction.delete),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetAction extends StatelessWidget {
+  const _SheetAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final sf = context.sf;
+    final scheme = context.scheme;
+    final tint = destructive ? sf.coralInk : sf.ink;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: AppRadius.brLg,
+        border: Border.all(color: scheme.outline),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: AppRadius.brLg,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: AppRadius.brLg,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            child: Row(
+              children: [
+                Icon(icon, size: 20, color: tint),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontFamily: AppTextStyles.fontUi,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.2,
+                      color: tint,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

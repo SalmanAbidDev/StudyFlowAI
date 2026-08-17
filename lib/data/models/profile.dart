@@ -41,23 +41,5 @@ class Profile {
   String get firstName => displayName.split(RegExp(r'\s+')).first;
 }
 
-class Achievement {
-  const Achievement({
-    required this.code,
-    required this.name,
-    required this.detail,
-    required this.earned,
-  });
-
-  factory Achievement.fromRow(Map<String, dynamic> row) => Achievement(
-        code: row['code'] as String,
-        name: row['name'] as String,
-        detail: (row['detail'] as String?) ?? '',
-        earned: row['earned_at'] != null,
-      );
-
-  final String code;
-  final String name;
-  final String detail;
-  final bool earned;
-}
+// Achievements live in achievement.dart — the catalogue is app knowledge, not
+// a per-user table.

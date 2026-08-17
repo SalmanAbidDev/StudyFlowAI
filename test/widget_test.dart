@@ -22,6 +22,7 @@ import 'package:ai_study_helper/features/components/components_screen.dart';
 import 'package:ai_study_helper/features/flashcards/flashcards_screen.dart';
 import 'package:ai_study_helper/features/onboarding/onboarding_screen.dart';
 import 'package:ai_study_helper/features/premium/premium_screen.dart';
+import 'package:ai_study_helper/features/profile/achievements_screen.dart';
 import 'package:ai_study_helper/features/quiz/quiz_result_screen.dart';
 import 'package:ai_study_helper/features/quiz/quiz_screen.dart';
 import 'package:ai_study_helper/features/shell/app_shell.dart';
@@ -72,6 +73,7 @@ Widget _scope({
   ShellPage? shellPage,
   bool signedIn = false,
   Map<String, String>? prefs,
+  bool emptyAccount = false,
 }) {
   return ProviderScope(
     overrides: [
@@ -81,8 +83,10 @@ Widget _scope({
       // The data layer is faked wholesale. `currentUserIdProvider` normally
       // reads the Supabase client, which does not exist here.
       currentUserIdProvider.overrideWithValue('test-user'),
-      libraryRepositoryProvider.overrideWithValue(FakeLibraryRepository()),
-      plannerRepositoryProvider.overrideWithValue(FakePlannerRepository()),
+      libraryRepositoryProvider
+          .overrideWithValue(FakeLibraryRepository(empty: emptyAccount)),
+      plannerRepositoryProvider
+          .overrideWithValue(FakePlannerRepository(empty: emptyAccount)),
       studyRepositoryProvider.overrideWithValue(FakeStudyRepository()),
       profileRepositoryProvider.overrideWithValue(FakeProfileRepository()),
       analyticsRepositoryProvider.overrideWithValue(FakeAnalyticsRepository()),
@@ -102,11 +106,13 @@ Widget _app(
   TransitionBuilder? builder,
   bool signedIn = false,
   Map<String, String>? prefs,
+  bool emptyAccount = false,
 }) {
   return _scope(
     shellPage: shellPage,
     signedIn: signedIn,
     prefs: prefs,
+    emptyAccount: emptyAccount,
     child: MaterialApp(
       theme: theme ?? AppTheme.light,
       builder: builder,
@@ -245,6 +251,135 @@ void main() {
     // Sheet dismissed, and the Appearance row reflects the choice.
     expect(find.text('How StudyFlow looks'), findsNothing);
     expect(find.text('System'), findsOneWidget);
+  });
+
+  testWidgets('achievements show the whole catalogue and View all opens it',
+      (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(
+      _app(const AppShell(), shellPage: ShellPage.profile),
+    );
+    await _settle(tester);
+
+    // The catalogue comes from the app, so the rail renders even though the
+    // fake reports only one earned badge.
+    expect(find.text('1 of 6 earned'), findsOneWidget);
+    expect(find.text('Hot streak'), findsWidgets);
+
+    await tester.tap(find.text('View all'));
+    await _settle(tester);
+
+    expect(find.byType(AchievementsScreen), findsOneWidget);
+    // Earned and locked both listed.
+    expect(find.text('Locked'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('materials search filters the library', (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(
+      _app(const AppShell(), shellPage: ShellPage.materials),
+    );
+    await _settle(tester);
+
+    expect(find.text(kFakeMaterialTitle), findsOneWidget);
+    expect(find.text('Monetary Policy Lecture'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'monetary');
+    await _settle(tester);
+
+    expect(find.text(kFakeMaterialTitle), findsNothing);
+    expect(find.text('Monetary Policy Lecture'), findsOneWidget);
+
+    // Matching the subject, not just the title.
+    await tester.enterText(find.byType(TextField), 'organic');
+    await _settle(tester);
+    expect(find.text(kFakeMaterialTitle), findsOneWidget);
+    expect(find.text('Monetary Policy Lecture'), findsNothing);
+
+    // A query with no hits gets its own empty state, distinct from an empty
+    // library.
+    await tester.enterText(find.byType(TextField), 'zzzz');
+    await _settle(tester);
+    expect(find.text('No matches'), findsOneWidget);
+    expect(find.text('Nothing here yet'), findsNothing);
+
+    await tester.tap(find.text('Clear search'));
+    await _settle(tester);
+    expect(find.text(kFakeMaterialTitle), findsOneWidget);
+  });
+
+  testWidgets('long-pressing a material offers delete, behind a confirmation',
+      (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(
+      _app(const AppShell(), shellPage: ShellPage.materials),
+    );
+    await _settle(tester);
+
+    await tester.longPress(find.text(kFakeMaterialTitle));
+    await _settle(tester);
+    expect(find.text('Open'), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget);
+
+    await tester.tap(find.text('Delete'));
+    await _settle(tester);
+
+    // Destructive actions are confirmed, never immediate.
+    expect(find.text('Delete this material?'), findsOneWidget);
+
+    await tester.tap(find.text('Cancel'));
+    await _settle(tester);
+    expect(find.text(kFakeMaterialTitle), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // Home on a brand-new account: every section that describes something the
+  // user has not done yet must either hide or say so plainly.
+  testWidgets('Home shows honest empty states on a new account',
+      (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(_app(const AppShell(), emptyAccount: true));
+    await _settle(tester);
+
+    // Nothing to resume → the whole section is absent, not an empty card.
+    expect(find.text('Pick up where you left off'), findsNothing);
+
+    // The Today header must not claim tasks that do not exist.
+    expect(find.textContaining('tasks ·'), findsNothing);
+    expect(find.textContaining('Nothing scheduled today'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.textContaining('No exams scheduled'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.textContaining('No exams scheduled'), findsOneWidget);
+    // No countdown and no preparation bar for an exam that does not exist.
+    expect(find.textContaining('% prepared'), findsNothing);
+    expect(find.textContaining('Nothing to suggest yet'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.textContaining('Upload a PDF'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.textContaining('Upload a PDF'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Home shows real data when the account has some',
+      (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(_app(const AppShell()));
+    await _settle(tester);
+
+    // Resume section appears, naming the part-read material.
+    expect(find.text('Pick up where you left off'), findsOneWidget);
+    expect(find.text(kFakeMaterialTitle), findsWidgets);
+
+    // Two blocks of 90m + 45m.
+    expect(find.text('2 tasks · 2h 15m'), findsOneWidget);
   });
 
   // System back at the shell root. `popRoute` is what the OS back button
@@ -463,6 +598,7 @@ void main() {
       // Pushed routes now, not shell pages — render them directly.
       'exams': plain(ExamsScreen.new),
       'analytics': plain(AnalyticsScreen.new),
+      'achievements': plain(AchievementsScreen.new),
       'upload': plain(UploadScreen.new),
       'chat': plain(ChatScreen.new),
       'summaries': plain(SummariesScreen.new),

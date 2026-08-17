@@ -90,6 +90,18 @@ class StudyRepository {
     );
   }
 
+  /// The most recent completed run, which is what Home's suggestion card
+  /// reasons from. Null until the user has finished a quiz.
+  Future<QuizAttempt?> latestAttempt() async {
+    final row = await _client
+        .from('quiz_attempts')
+        .select('correct, total, missed')
+        .order('completed_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+    return row == null ? null : QuizAttempt.fromRow(row);
+  }
+
   Future<void> recordAttempt({
     required String userId,
     required String? quizId,

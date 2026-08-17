@@ -36,6 +36,14 @@ class HomeScreen extends ConsumerWidget {
     // returning users pay one no-op call.
     ref.watch(starterContentProvider);
 
+    final resume = ref.watch(resumeMaterialProvider).value;
+    // The five most recent documents; the rail scrolls, so a longer library
+    // just means more to swipe through.
+    final recent =
+        (ref.watch(materialsProvider).value ?? const <StudyMaterial>[])
+            .take(5)
+            .toList();
+
     return ListView(
       padding: EdgeInsets.only(
         top: 14,
@@ -50,21 +58,32 @@ class HomeScreen extends ConsumerWidget {
         ),
         const SizedBox(height: 16),
         _quickActions(context),
-        const SizedBox(height: 16),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 22),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SectionHeader('Pick up where you left off'),
-              _ResumeCard(
-                onResume: () => Navigator.of(context).push(
-                  sfRoute(builder: (_) => const SummariesScreen()),
+        // Only present once there is something to resume. A section titled
+        // "pick up where you left off" on a fresh account is a promise the app
+        // cannot keep.
+        if (resume != null) ...[
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionHeader('Pick up where you left off'),
+                _ResumeCard(
+                  material: resume,
+                  onResume: () {
+                    ref
+                        .read(selectedMaterialProvider.notifier)
+                        .update(resume.id);
+                    Navigator.of(context).push(
+                      sfRoute(builder: (_) => const SummariesScreen()),
+                    );
+                  },
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+        ],
         const SizedBox(height: 16),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 22),
@@ -73,7 +92,9 @@ class HomeScreen extends ConsumerWidget {
             children: [
               SectionHeader(
                 'Today',
-                subtitle: '3 tasks · 2h 15m',
+                // Null on an empty day — the header used to claim
+                // "3 tasks · 2h 15m" regardless of what was scheduled.
+                subtitle: ref.watch(todaySummaryProvider).label,
                 action: 'See all',
                 onAction: () =>
                     ref.read(shellPageProvider.notifier).go(ShellPage.planner),
@@ -115,14 +136,50 @@ class HomeScreen extends ConsumerWidget {
           padding: const EdgeInsets.symmetric(horizontal: 22),
           child: SectionHeader(
             'Recent materials',
-            action: 'All',
+            // No point offering "All" when there is nothing to see.
+            action: recent.isEmpty ? null : 'All',
             onAction: () =>
                 ref.read(shellPageProvider.notifier).go(ShellPage.materials),
           ),
         ),
+        if (recent.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 22),
+            child: SfCard(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+              onTap: () => Navigator.of(context).push(
+                sfModalRoute(builder: (_) => const UploadScreen()),
+              ),
+              child: Row(
+                children: [
+                  SoftIconTile(
+                    icon: Icons.file_upload_outlined,
+                    color: context.scheme.primary,
+                    background: sf.indigoSoft,
+                    width: 40,
+                    height: 40,
+                    radius: 12,
+                    iconSize: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Upload a PDF or paste your notes to get started.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.35,
+                        color: sf.ink3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         // Sized by its content rather than a fixed height: the card is two
         // text lines tall, so any font-metric or text-scale difference would
         // overflow a hard-coded strip height.
+        if (recent.isNotEmpty)
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           // Vertical padding is the card shadow's room to land in — the scroll
@@ -137,11 +194,7 @@ class HomeScreen extends ConsumerWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-              // The five most recent documents; the rail scrolls, so a longer
-              // library just means more to swipe through.
-              for (final d in (ref.watch(materialsProvider).value ??
-                      const <StudyMaterial>[])
-                  .take(5))
+              for (final d in recent)
                 Padding(
                   padding: const EdgeInsets.only(right: 10),
                   child: SizedBox(
@@ -482,6 +535,12 @@ class _StreakHero extends ConsumerWidget {
     final done = blocks.where((b) => b.done).length;
     final ratio = blocks.isEmpty ? 0.0 : done / blocks.length;
 
+    // Until the week loads, show every day as upcoming rather than guessing —
+    // a tick that appears and then vanishes is worse than one that arrives
+    // late.
+    final week = ref.watch(weekActivityProvider).value ??
+        List.filled(7, DayState.upcoming);
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
       child: Container(
@@ -591,35 +650,14 @@ class _StreakHero extends ConsumerWidget {
                       Expanded(
                         child: Column(
                           children: [
-                            Container(
-                              width: 22,
-                              height: 22,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(8),
-                                color: i < 5
-                                    ? sf.streak
-                                    : Colors.white.withValues(alpha: 0.15),
-                              ),
-                              child: i < 5
-                                  ? Icon(Icons.check_rounded,
-                                      size: 13, color: sf.brand)
-                                  : i == 5
-                                      ? Container(
-                                          width: 6,
-                                          height: 6,
-                                          decoration: const BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : null,
-                            ),
+                            _DayPip(state: week[i]),
                             const SizedBox(height: 4),
                             SfMono(
                               const ['M', 'T', 'W', 'T', 'F', 'S', 'S'][i],
                               size: 10,
-                              color: Colors.white.withValues(alpha: 0.6),
+                              color: Colors.white.withValues(
+                                alpha: week[i] == DayState.upcoming ? 0.4 : 0.6,
+                              ),
                             ),
                           ],
                         ),
@@ -637,16 +675,58 @@ class _StreakHero extends ConsumerWidget {
 
 // ─── Resume card ──────────────────────────────────────────────────────────
 
-class _ResumeCard extends ConsumerWidget {
-  const _ResumeCard({required this.onResume});
+/// One square in the streak week strip.
+class _DayPip extends StatelessWidget {
+  const _DayPip({required this.state});
 
+  final DayState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final sf = context.sf;
+
+    return Container(
+      width: 22,
+      height: 22,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        color: switch (state) {
+          DayState.done => sf.streak,
+          DayState.today => Colors.white.withValues(alpha: 0.25),
+          DayState.idle => Colors.white.withValues(alpha: 0.15),
+          // Dimmer still: a day that has not happened cannot be a miss.
+          DayState.upcoming => Colors.white.withValues(alpha: 0.08),
+        },
+      ),
+      child: switch (state) {
+        DayState.done => Icon(Icons.check_rounded, size: 13, color: sf.brand),
+        DayState.today => Container(
+            width: 6,
+            height: 6,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white,
+            ),
+          ),
+        _ => null,
+      },
+    );
+  }
+}
+
+/// Only built when there is something to resume, so [material] is non-null
+/// and the card never has to render a "nothing here" state.
+class _ResumeCard extends StatelessWidget {
+  const _ResumeCard({required this.material, required this.onResume});
+
+  final StudyMaterial material;
   final VoidCallback onResume;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final sf = context.sf;
     final scheme = context.scheme;
-    final material = ref.watch(resumeMaterialProvider).value;
 
     return SfCard(
       padding: EdgeInsets.zero,
@@ -711,10 +791,10 @@ class _ResumeCard extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    SfChip(material?.subjectName ?? 'Library', small: true),
+                    SfChip(material.subjectName, small: true),
                     const SizedBox(height: 8),
                     Text(
-                      material?.title ?? 'Nothing to resume yet',
+                      material.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -730,11 +810,11 @@ class _ResumeCard extends ConsumerWidget {
                     Row(
                       children: [
                         Expanded(
-                          child: SfProgress(value: material?.progress ?? 0),
+                          child: SfProgress(value: material.progress),
                         ),
                         const SizedBox(width: 8),
                         SfMono(
-                          '${((material?.progress ?? 0) * 100).round()}%',
+                          '${(material.progress * 100).round()}%',
                           color: sf.ink3,
                         ),
                       ],
@@ -745,7 +825,7 @@ class _ResumeCard extends ConsumerWidget {
                       children: [
                         Flexible(
                           child: Text(
-                            material?.meta ?? '',
+                            material.meta,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(fontSize: 11, color: sf.ink3),
@@ -804,45 +884,61 @@ class _NextExamCard extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Text(
-            exam == null ? '—' : '${exam.daysLeft}d',
-            style: AppTextStyles.displayL.copyWith(
-              fontSize: 32,
-              letterSpacing: -1.2,
-              height: 1,
-              color: sf.ink,
+          // With no exam there is no countdown and no preparation to report.
+          // Showing "0% prepared" under a dash would describe a thing that
+          // does not exist.
+          if (exam == null)
+            Text(
+              'No exams scheduled.\nAdd one and Flow will plan around it.',
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.4,
+                fontWeight: FontWeight.w500,
+                color: sf.ink3,
+              ),
+            )
+          else ...[
+            Text(
+              '${exam.daysLeft}d',
+              style: AppTextStyles.displayL.copyWith(
+                fontSize: 32,
+                letterSpacing: -1.2,
+                height: 1,
+                color: sf.ink,
+              ),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            exam?.title ?? 'No exams scheduled',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: sf.ink2,
+            const SizedBox(height: 4),
+            Text(
+              exam.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: sf.ink2,
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          SfProgress(value: exam?.preparation ?? 0, color: sf.coral),
-          const SizedBox(height: 4),
-          Text('${((exam?.preparation ?? 0) * 100).round()}% prepared',
-              style: TextStyle(fontSize: 10, color: sf.ink3)),
+            const SizedBox(height: 10),
+            SfProgress(value: exam.preparation, color: sf.coral),
+            const SizedBox(height: 4),
+            Text('${(exam.preparation * 100).round()}% prepared',
+                style: TextStyle(fontSize: 10, color: sf.ink3)),
+          ],
         ],
       ),
     );
   }
 }
 
-class _FlowSuggestionCard extends StatelessWidget {
+class _FlowSuggestionCard extends ConsumerWidget {
   const _FlowSuggestionCard({required this.onStart});
 
   final VoidCallback onStart;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
+    final suggestion = ref.watch(flowSuggestionProvider).value;
 
     return SfCard(
       child: Column(
@@ -860,23 +956,30 @@ class _FlowSuggestionCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Text(
-            'Review enantiomers — you scored 60% last time.',
+          // The `**bold**` spans come from the suggestion rule, which quotes a
+          // real topic or document title.
+          MarkedText(
+            suggestion?.text ??
+                'Nothing to suggest yet — finish a quiz and I will spot the '
+                    'weak areas.',
+            accentColor: context.scheme.primary,
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
               height: 1.35,
-              color: sf.ink,
+              color: suggestion == null ? sf.ink3 : sf.ink,
             ),
           ),
-          const SizedBox(height: 10),
-          SfButton(
-            'Start review',
-            variant: SfButtonVariant.soft,
-            size: SfButtonSize.sm,
-            trailingIcon: Icons.arrow_forward_rounded,
-            onPressed: onStart,
-          ),
+          if (suggestion?.action != null) ...[
+            const SizedBox(height: 10),
+            SfButton(
+              suggestion!.action!,
+              variant: SfButtonVariant.soft,
+              size: SfButtonSize.sm,
+              trailingIcon: Icons.arrow_forward_rounded,
+              onPressed: onStart,
+            ),
+          ],
         ],
       ),
     );

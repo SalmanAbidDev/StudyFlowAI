@@ -4,7 +4,7 @@ Read this first if you are picking this project up cold. It covers what the app
 is, how it is put together, the decisions behind that structure, and the traps
 already discovered so you do not rediscover them.
 
-Last updated: 2026-08-12.
+Last updated: 2026-08-17.
 
 **Where the project stands.** Built from a design file as UI-only → restructured
 to MVVM + Riverpod → connected to Supabase (auth, 16 tables with RLS, storage)
@@ -23,6 +23,7 @@ by accident.
 | `ShellPage` holds the four tabs and nothing else | §3.2 |
 | No raw `ListTile` in a sheet — it drags Material's typography in | §6.1 |
 | Tests never touch the network or a platform channel | §8 |
+| No hard-coded stats — say nothing rather than something false | §5.1 |
 | `flutter analyze` clean and all tests green | §1 |
 
 ---
@@ -49,7 +50,7 @@ connected to Supabase.
 
 ```bash
 flutter analyze     # expect: No issues found!
-flutter test        # expect: 99 tests, all passing
+flutter test        # expect: 109 tests, all passing
 ```
 
 **Running it** — credentials come in at build time, so a bare `flutter run`
@@ -113,7 +114,8 @@ subjects                             name, accent (enum), icon (text key)
   └── study_sessions                 started_at, duration_minutes, focus_score
 quiz_attempts                        correct, total, elapsed_seconds, missed[]
 chat_threads ── chat_messages        role (enum), content, sources[]
-achievements                         code, name, detail, earned_at
+achievements                         code, earned_at   (name/detail/icon
+                                     live in the app — §5.2)
 ```
 
 Storage: private bucket `materials`, 50 MB cap, mime-restricted, 4 policies.
@@ -130,7 +132,11 @@ Storage: private bucket `materials`, 50 MB cap, mime-restricted, 4 policies.
 20260810102704  revoke_execute_on_trigger_functions
 20260810115615  subject_icon_and_starter_seed
 20260810131459  cover_remaining_foreign_keys
+20260817072046  starter_content_starts_unread
+20260817072750  seed_guard_uses_explicit_marker
 ```
+
+`profiles` gained `starter_seeded_at timestamptz` in the last one.
 
 ### 2.3 Schema decisions worth preserving
 
@@ -150,6 +156,12 @@ Storage: private bucket `materials`, 50 MB cap, mime-restricted, 4 policies.
   policies compare the first path segment to `auth.uid()`. That, not the bucket
   being private, is what stops one account reading another's files. Do not
   change the key format without updating the policies.
+- **Deleting a material cascades its `summary_sections`, but decks and quizzes
+  only lose their `material_id`** (`ON DELETE SET NULL`). They survive as
+  orphans. `deleteMaterialProvider` also removes the storage object — **row
+  first, file second**, deliberately: a failed file delete leaves invisible
+  wasted space, whereas deleting the file first and then failing on the row
+  leaves a material that opens onto nothing.
 - **Trigger functions have `EXECUTE` revoked** from `anon`/`authenticated`.
   Being `SECURITY DEFINER` they were reachable at `/rest/v1/rpc/…`. Triggers
   still fire — Postgres does not check `EXECUTE` for trigger invocation.
@@ -163,13 +175,31 @@ errors if called directly). Left alone deliberately — do not "fix" it.
 
 ### 2.5 Starter content
 
-`seed_starter_content()` (SECURITY INVOKER, idempotent) fills a brand-new
-account with one subject set, a material with a summary, a deck, a quiz,
-today's blocks, exams and achievements. `HomeScreen` watches
-`starterContentProvider`, which calls it once.
+`seed_starter_content()` (SECURITY INVOKER) fills a brand-new account with four
+subjects, three materials with a summary, a deck, a quiz, today's blocks, exams
+and achievements. `HomeScreen` watches `starterContentProvider`, which calls it
+once. `anon` has no `EXECUTE`; `authenticated` does.
+
+**Everything it writes starts at zero.** Materials at `progress = 0`, sections
+unread, blocks not done, exams at `preparation = 0`, achievements unearned. It
+originally seeded 42% / 78% progress and two ticked blocks, which made a
+brand-new account show a resume card and a streak week it had not earned —
+every "what have you done" surface was lying on first run. The library is there
+to explore; the progress on it has to be earned.
+
+**The guard is `profiles.starter_seeded_at`, not "does this user have any
+subject".** The old guard conflated *never seeded* with *deleted everything*,
+so a user who cleared their library would have it dumped back on them at next
+launch. Seeded once, ever.
+
+To re-seed an account (the whole point of the marker being nullable):
+
+```sql
+update public.profiles set starter_seeded_at = null where id = '<user>';
+```
 
 **This is a product decision, not a technical requirement.** Without it a new
-account lands on six empty screens, which reads as broken rather than new.
+account lands on empty screens, which can read as broken rather than new.
 To remove: drop the `starterContentProvider` watch in `home_screen.dart` and
 the function. Nothing else depends on it.
 
@@ -196,7 +226,8 @@ lib/
     demo_content.dart           only the Free-vs-Pro paywall matrix now
     supabase_providers.dart     client + all repository providers
     models/                     subject, study_material, study_block, exam,
-                                flashcard, summary_section, quiz, profile
+                                flashcard, summary_section, quiz, profile,
+                                achievement (catalogue + progress — see §5.2)
     repositories/               auth, library, planner, study, profile,
                                 analytics, chat, storage
   features/<name>/
@@ -371,6 +402,57 @@ swallowed on purpose — losing a score row must not block the results screen.
 Materials filter rail and its counts, and all of Insights (computed from
 `study_sessions` + `flashcards`, never from counters).
 
+### 5.1 Say nothing rather than something false
+
+Home shipped from the design full of hard-coded claims — a five-day streak, a
+resume card, "3 tasks · 2h 15m", "you scored 60% last time". All of it read as
+real. Every one is now derived, and **the empty case hides or states itself
+rather than rendering a zero**:
+
+| Surface | Source | With nothing to show |
+|---|---|---|
+| Streak week strip | `weekActivityProvider` — this week's `study_blocks` | no ticks; today is a dot, future days dimmer |
+| Pick up where you left off | `resumeMaterialProvider` — `0 < progress < 1` | **whole section absent** |
+| Today subtitle | `todaySummaryProvider` | `label` is null → header shows just "Today" |
+| Next exam | `nextExamProvider` | message only — no countdown, no `0% prepared` bar |
+| Flow suggests | `flowSuggestionProvider` | "Nothing to suggest yet"; button hidden |
+| Recent materials | `materialsProvider` | an upload prompt; "All" action hidden |
+
+Two rules worth carrying to other screens:
+
+- **An absent section beats an empty card.** "Pick up where you left off" on a
+  fresh account is a promise the app cannot keep, so it is not rendered at all.
+- **Do not render a zero for a thing that does not exist.** The exam card used
+  to show `—` above a 0%-filled bar labelled "0% prepared", describing an exam
+  nobody had scheduled.
+- **"Nothing matched" is not "nothing here yet".** Materials distinguishes
+  them (`materialsFilteredToNothingProvider`): a search with no hits offers
+  *Clear search*, an empty library offers *Upload*. Showing the upload prompt
+  to someone whose library is full but whose query missed is nonsense.
+
+**`flowSuggestionProvider` is a rule, not a model.** There is still no AI (§9).
+It reasons over real rows in priority order — a quiz attempt below 80% names
+the missed topic and the true score; failing that, the least-progressed
+material; failing that, nothing. Returning null is a valid outcome and the
+card handles it. Do not "improve" this by inventing copy.
+
+### 5.2 Catalogue in the app, progress in the database
+
+`achievementCatalogue` in `data/models/achievement.dart` defines what badges
+exist — code, name, criterion, icon, accent. The `achievements` table stores
+only `code` + `earned_at`: *which* ones this user has earned.
+
+It was the other way round, seeded as four rows per account, and that was
+wrong three ways: every user carried a duplicate of the same list, adding a
+badge would need a backfill across all of them, and **deleting the rows made
+the feature vanish from the UI** rather than showing an unearned set. That last
+one is how it was found — a content reset emptied the table and the Profile
+rail rendered nothing under a live "Achievements" header.
+
+`achievementsProvider` composes the two and is **never empty**, sorted earned
+first. Anything with a fixed set of options and per-user progress against it
+belongs in this shape.
+
 ---
 
 ## 6. Design system
@@ -455,8 +537,14 @@ Specifics learned building these:
   `sf.indigoSoft` is nearly the surface colour, so a fill alone barely reads.
 - **Stack modal buttons, do not put them in a `Row`.** At text scale 1.3 two
   side-by-side `SfButton`s each ellipsis to a few characters.
-- `SfButtonVariant.secondary` is `bg: scheme.surface`, so it is near-invisible
-  *on* a surface. Use `ghost` for a quiet action on a card.
+- **Pick the button variant from what is behind it.** `secondary` is
+  `bg: scheme.surface` + outline, `ghost` is transparent and borderless.
+  On the **canvas** (any sheet body — §6.1) use `secondary`; ghost there is
+  just floating text, which is how the confirm sheets shipped a Cancel button
+  nobody could see. On a **surface** (inside a card) it inverts: `secondary`
+  disappears into its own background and `ghost` is the right quiet action.
+  This bit once, by carrying the dialog-era choice over when the confirmation
+  became a sheet — the background changed, the variant did not.
 - **Write modal tests against text, not widget type.** The sign-out test
   survived the `AlertDialog` → `Dialog` → sheet migration untouched because it
   looks for `'Sign out?'` and `'Cancel'` rather than `find.byType(Dialog)`.
@@ -501,18 +589,28 @@ These were real device bugs, each with a general lesson:
 10. **A fixed-height card cannot hold text at every scale.** The 360pt
     flashcard faces let their middle band flex and scroll; at text scale 1.3
     the question alone exceeded the card.
+11. **A `GridView` cell is a fixed box — do not size it with
+    `childAspectRatio`.** A ratio tuned at scale 1.0 overflows at 1.3. The
+    achievements grid uses `mainAxisExtent` computed from the text scale
+    (`MediaQuery.textScalerOf(context).scale(14) / 14`, since there is no
+    plain factor getter), and lets the text block inside `Flex` so the status
+    chip stays pinned to the bottom of every card.
 
 ---
 
 ## 8. Tests
 
-`test/widget_test.dart` — 99 tests:
+`test/widget_test.dart` — 109 tests:
 
 - Flow tests: splash → onboarding → auth → shell, empty-submit rejection,
   stored-session routing, tab switching, quiz run, flashcard flip, chat reply.
-- Modal tests: the appearance sheet opens/applies, the sign-out dialog opens and
-  cancels. **The layout sweep cannot reach these** — a sheet or dialog is not
-  built until something taps it open, so any new one needs its own test.
+- Modal tests: the appearance sheet opens/applies, sign-out opens and cancels,
+  and long-pressing a material offers delete **behind a confirmation** — that
+  one pins the *cancel* path, where a bug destroys data silently. **The layout
+  sweep cannot reach modals** — a sheet is not built until something taps it
+  open, so any new one needs its own test.
+- Feature tests: Home's empty vs populated states, materials search (title,
+  subject, no-match, clear), achievements catalogue + View all navigation.
 - Theme persistence: a stored value is applied on launch; picking one writes it.
 - A layout sweep: every screen × both brightnesses × text scales 1.15 and 1.3 ×
   a narrow 340×760 phone. The narrow pass exists because a real device reported
@@ -543,8 +641,13 @@ Harness notes:
   until the widget is *created*.
 - Use `tester.binding.handlePopRoute()` to exercise the **system** back button.
   Tapping an in-app back widget does not go through `PopScope`.
-- `_scope()` takes `prefs:` for seeding stored preferences and `signedIn:` for
-  starting with a session.
+- `_scope()` takes `prefs:` for seeding stored preferences, `signedIn:` for
+  starting with a session, and **`emptyAccount:`** for a brand-new account with
+  no materials, blocks or exams — which is the only way to reach Home's empty
+  states (§5.1).
+- The repository fakes are the contract: adding a method to a repository breaks
+  `fake_repositories.dart` at compile time until it is implemented there too.
+  That is deliberate — a fake that silently lags the real thing tests nothing.
 
 ---
 
@@ -558,8 +661,9 @@ Harness notes:
   `AndroidManifest.xml`. (The Apple button was removed from the Auth screen.)
 - **The AI.** Chat replies still come from the scripted table in
   `chat_models.dart`; summaries and quizzes are seeded rows. The *transcript*
-  is real (persisted to `chat_threads`/`chat_messages`). Wiring an LLM was kept
-  deliberately separate from wiring the backend.
+  is real (persisted to `chat_threads`/`chat_messages`). Home's "Flow suggests"
+  card is a deterministic rule over real rows, not a model (§5.1). Wiring an
+  LLM was kept deliberately separate from wiring the backend.
 - **`study_sessions` is never written.** Table, `logSession()` and the Insights
   charts all exist, but nothing calls it — there is no study timer in the UI
   yet. Insights will read zero until one is added. **This is the most likely
@@ -569,7 +673,10 @@ Harness notes:
 - **Upload progress is indeterminate.** The Supabase SDK reports no byte counts
   for a single upload, so `SfProgress` takes a nullable value. A fabricated
   percentage would look better and be a lie.
-- **Search bar is decorative.** Tapping does nothing; no search is implemented.
+- **Nothing awards achievements.** The catalogue, the screen, the rail and the
+  `earned_at` column all exist, but no code ever writes it — no rule watches a
+  streak or a quiz score. Every badge stays locked until that half is built.
+  **A likely next task**, alongside `study_sessions`.
 - **No pull-to-refresh anywhere.** Home and Materials both had a
   `RefreshIndicator`; both were removed on request. Their providers are *not*
   autoDispose (shell-resident), so data now refreshes only on restart or via an

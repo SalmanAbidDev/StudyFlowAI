@@ -59,3 +59,33 @@ class Quiz {
   final String title;
   final List<QuizQuestion> questions;
 }
+
+class QuizAttempt {
+  const QuizAttempt({
+    required this.correct,
+    required this.total,
+    required this.missed,
+  });
+
+  factory QuizAttempt.fromRow(Map<String, dynamic> row) => QuizAttempt(
+        correct: (row['correct'] as int?) ?? 0,
+        total: (row['total'] as int?) ?? 0,
+        missed: ((row['missed'] as List?) ?? const [])
+            .map((m) => m as String)
+            .toList(),
+      );
+
+  final int correct;
+  final int total;
+  final List<String> missed;
+
+  double get score => total == 0 ? 0 : correct / total;
+
+  /// "Q3 · Assigning R/S priority" → "Assigning R/S priority". The question
+  /// number is meaningless outside the run it came from.
+  String? get firstMissedTopic {
+    if (missed.isEmpty) return null;
+    final parts = missed.first.split(' · ');
+    return parts.length > 1 ? parts.sublist(1).join(' · ') : parts.first;
+  }
+}

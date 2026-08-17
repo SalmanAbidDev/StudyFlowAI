@@ -202,9 +202,10 @@ class PlannerScreen extends ConsumerWidget {
         ),
         Padding(
           // A pinned footer rather than scroll content, so it has to clear the
-          // pill on its own.
+          // pill on its own. The extra beyond the pill's own height is what
+          // stops the button reading as part of the nav bar.
           padding: EdgeInsets.fromLTRB(
-              22, 0, 22, sfNavContentInset(context, extra: 8)),
+              22, 0, 22, sfNavContentInset(context, extra: 28)),
           child: _AddBlockButton(
             onTap: () => ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Block editor is not built yet')),

@@ -12,20 +12,10 @@ import '../auth/auth_screen.dart';
 import '../auth/auth_view_model.dart';
 import '../home/home_view_model.dart';
 import '../premium/premium_screen.dart';
+import 'achievements_screen.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
-
-  /// Maps an achievement's stable code to its badge. Unknown codes still
-  /// render — a badge added server-side shows up with a neutral icon rather
-  /// than crashing an older build.
-  static ({IconData icon, int accent}) _badge(String code) => switch (code) {
-        'hot_streak' => (icon: Icons.local_fire_department_rounded, accent: 0),
-        'quiz_ace' => (icon: Icons.emoji_events_outlined, accent: 1),
-        'card_master' => (icon: Icons.style_outlined, accent: 2),
-        'deep_focus' => (icon: Icons.my_location_rounded, accent: 3),
-        _ => (icon: Icons.star_outline_rounded, accent: 3),
-      };
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -33,6 +23,7 @@ class ProfileScreen extends ConsumerWidget {
     final scheme = context.scheme;
     final profile = ref.watch(profileProvider).value;
     final achievements = ref.watch(achievementsProvider).value ?? const [];
+    final earnedCount = achievements.where((a) => a.earned).length;
     final email = ref.watch(sessionProvider)?.user.email ?? '';
     final accents = [sf.coral, sf.amber, sf.violet, scheme.primary];
 
@@ -171,8 +162,11 @@ class ProfileScreen extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(22, 4, 22, 0),
           child: SectionHeader(
             'Achievements',
+            subtitle: '$earnedCount of ${achievements.length} earned',
             action: 'View all',
-            onAction: () {},
+            onAction: () => Navigator.of(context).push(
+              sfRoute(builder: (_) => const AchievementsScreen()),
+            ),
           ),
         ),
         // Content-sized, not a fixed strip height — see the note on Home's
@@ -192,10 +186,10 @@ class ProfileScreen extends ConsumerWidget {
               children: [
               for (final a in achievements.map(
                 (row) => (
-                  icon: _badge(row.code).icon,
+                  icon: row.icon,
                   name: row.name,
                   meta: row.detail,
-                  color: accents[_badge(row.code).accent],
+                  color: accents[row.accent],
                   earned: row.earned,
                 ),
               ))

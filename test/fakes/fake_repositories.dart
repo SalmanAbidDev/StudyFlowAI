@@ -38,18 +38,38 @@ StudyMaterial _material(String id, String title, String subject,
     );
 
 class FakeLibraryRepository implements LibraryRepository {
-  final _materials = [
-    _material('m1', kFakeMaterialTitle, 'Organic Chemistry',
-        SubjectAccent.indigo, 0.42),
-    _material('m2', 'Monetary Policy Lecture', 'Macroeconomics',
-        SubjectAccent.emerald, 1),
-  ];
+  /// [empty] models a brand-new account, which is what Home's conditional
+  /// sections have to be tested against.
+  FakeLibraryRepository({bool empty = false})
+      : _materials = empty
+            ? []
+            : [
+                _material('m1', kFakeMaterialTitle, 'Organic Chemistry',
+                    SubjectAccent.indigo, 0.42),
+                _material('m2', 'Monetary Policy Lecture', 'Macroeconomics',
+                    SubjectAccent.emerald, 1),
+              ];
+
+  final List<StudyMaterial> _materials;
 
   @override
   Future<List<StudyMaterial>> materials() async => _materials;
 
   @override
-  Future<StudyMaterial?> latestMaterial() async => _materials.first;
+  Future<StudyMaterial?> latestMaterial() async =>
+      _materials.isEmpty ? null : _materials.first;
+
+  @override
+  Future<StudyMaterial?> resumeMaterial() async => _materials
+      .where((m) => m.progress > 0 && m.progress < 1)
+      .firstOrNull;
+
+  @override
+  Future<StudyMaterial?> leastProgressed() async {
+    final unfinished = _materials.where((m) => m.progress < 1).toList()
+      ..sort((a, b) => a.progress.compareTo(b.progress));
+    return unfinished.firstOrNull;
+  }
 
   @override
   Future<List<Subject>> subjects() async => const [];
@@ -87,6 +107,21 @@ class FakeLibraryRepository implements LibraryRepository {
 }
 
 class FakePlannerRepository implements PlannerRepository {
+  FakePlannerRepository({this.empty = false});
+
+  final bool empty;
+
+  @override
+  Future<Map<DateTime, List<StudyBlock>>> blocksBetween(
+    DateTime from,
+    DateTime to,
+  ) async {
+    if (empty) return {};
+    // Everything on today, so the week strip has exactly one judgeable day.
+    final now = DateTime.now();
+    return {DateTime(now.year, now.month, now.day): _blocks};
+  }
+
   var _blocks = <StudyBlock>[
     const StudyBlock(
       id: 'b1',
@@ -111,7 +146,7 @@ class FakePlannerRepository implements PlannerRepository {
   ];
 
   @override
-  Future<List<StudyBlock>> blocksOn(DateTime day) async => _blocks;
+  Future<List<StudyBlock>> blocksOn(DateTime day) async => empty ? [] : _blocks;
 
   @override
   Future<void> saveOrder(List<StudyBlock> blocks) async => _blocks = blocks;
@@ -129,7 +164,7 @@ class FakePlannerRepository implements PlannerRepository {
   }) async {}
 
   @override
-  Future<List<Exam>> upcomingExams() async => [
+  Future<List<Exam>> upcomingExams() async => empty ? [] : [
         Exam(
           id: 'e1',
           title: 'Organic Chem Final',
@@ -141,6 +176,15 @@ class FakePlannerRepository implements PlannerRepository {
 }
 
 class FakeStudyRepository implements StudyRepository {
+  FakeStudyRepository({this.attempt});
+
+  /// Null means "no quiz finished yet", which is what Home's suggestion card
+  /// falls back from.
+  final QuizAttempt? attempt;
+
+  @override
+  Future<QuizAttempt?> latestAttempt() async => attempt;
+
   @override
   Future<Deck?> firstDeck() async => const Deck(
         id: 'd1',
@@ -231,15 +275,11 @@ class FakeProfileRepository implements ProfileRepository {
   @override
   Future<void> updateName(String fullName) async {}
 
+  /// One earned badge; the rest of the catalogue comes from the app, so the
+  /// list is never empty regardless of what this returns.
   @override
-  Future<List<Achievement>> achievements() async => const [
-        Achievement(
-          code: 'hot_streak',
-          name: 'Hot streak',
-          detail: '10 days',
-          earned: true,
-        ),
-      ];
+  Future<Map<String, DateTime>> earnedAchievements() async =>
+      {'hot_streak': DateTime.utc(2026, 8, 1)};
 
   @override
   Future<void> seedStarterContent() async {}

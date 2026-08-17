@@ -295,6 +295,7 @@ class SfCard extends StatelessWidget {
     required this.child,
     this.padding = const EdgeInsets.all(16),
     this.onTap,
+    this.onLongPress,
     this.color,
     this.gradient,
     this.radius = AppRadius.lg,
@@ -304,6 +305,10 @@ class SfCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry padding;
   final VoidCallback? onTap;
+
+  /// Long-press for a row's secondary actions. The card becomes interactive if
+  /// either callback is set, so a long-press-only card still gets its ripple.
+  final VoidCallback? onLongPress;
   final Color? color;
   final Gradient? gradient;
   final double radius;
@@ -315,11 +320,16 @@ class SfCard extends StatelessWidget {
     final br = BorderRadius.circular(radius);
 
     Widget body = Padding(padding: padding, child: child);
-    if (onTap != null) {
+    if (onTap != null || onLongPress != null) {
       body = Material(
         color: Colors.transparent,
         borderRadius: br,
-        child: InkWell(onTap: onTap, borderRadius: br, child: body),
+        child: InkWell(
+          onTap: onTap,
+          onLongPress: onLongPress,
+          borderRadius: br,
+          child: body,
+        ),
       );
     }
 
@@ -710,38 +720,78 @@ class SfField extends StatelessWidget {
 }
 
 /// Non-editable search affordance (taps would open a search route).
+/// A real text field, not a tappable label. It was a styled `Text` from the
+/// design import, which looked identical and did nothing.
 class SfSearchBar extends StatelessWidget {
-  const SfSearchBar({super.key, required this.hint, this.onTap});
+  const SfSearchBar({
+    super.key,
+    required this.hint,
+    this.controller,
+    this.onChanged,
+    this.onClear,
+  });
 
   final String hint;
-  final VoidCallback? onTap;
+  final TextEditingController? controller;
+  final ValueChanged<String>? onChanged;
+
+  /// Shows a clear button whenever the field is non-empty.
+  final VoidCallback? onClear;
 
   @override
   Widget build(BuildContext context) {
     final sf = context.sf;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: context.scheme.surfaceContainerHigh,
-          borderRadius: AppRadius.brMd,
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.search_rounded, size: 18, color: sf.ink3),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                hint,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 14, color: sf.ink3),
+
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.only(left: 14, right: 6),
+      decoration: BoxDecoration(
+        color: context.scheme.surfaceContainerHigh,
+        borderRadius: AppRadius.brMd,
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.search_rounded, size: 18, color: sf.ink3),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              onChanged: onChanged,
+              textInputAction: TextInputAction.search,
+              style: TextStyle(
+                fontFamily: AppTextStyles.fontUi,
+                fontSize: 14,
+                color: sf.ink,
+              ),
+              decoration: InputDecoration(
+                isDense: true,
+                filled: false,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                hintText: hint,
+                hintStyle: TextStyle(fontSize: 14, color: sf.ink3),
               ),
             ),
-          ],
-        ),
+          ),
+          if (controller != null)
+            // Rebuilds only the button as you type, rather than the screen.
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: controller!,
+              builder: (context, value, _) => value.text.isEmpty
+                  ? const SizedBox(width: 8)
+                  : GestureDetector(
+                      onTap: onClear,
+                      behavior: HitTestBehavior.opaque,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Icon(Icons.close_rounded,
+                            size: 16, color: sf.ink3),
+                      ),
+                    ),
+            ),
+        ],
       ),
     );
   }

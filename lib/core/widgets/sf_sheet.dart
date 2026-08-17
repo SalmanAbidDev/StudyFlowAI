@@ -162,9 +162,14 @@ class SfConfirmSheet extends StatelessWidget {
             onPressed: () => Navigator.of(context).pop(true),
           ),
           const SizedBox(height: 8),
+          // `secondary`, not `ghost`: the sheet body is the *canvas* colour, so
+          // a surface fill with an outline reads as a button here. Ghost was
+          // carried over from when this was a Dialog on `scheme.surface`,
+          // where a surface-filled button would have been invisible — on the
+          // canvas it is the borderless one that disappears.
           SfButton(
             cancelLabel,
-            variant: SfButtonVariant.ghost,
+            variant: SfButtonVariant.secondary,
             size: SfButtonSize.lg,
             expand: true,
             onPressed: () => Navigator.of(context).pop(false),

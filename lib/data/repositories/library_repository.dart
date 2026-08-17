@@ -45,6 +45,37 @@ class LibraryRepository {
     return row == null ? null : StudyMaterial.fromRow(row);
   }
 
+  /// The document to offer as "pick up where you left off": genuinely started
+  /// but not finished, most recently touched first.
+  ///
+  /// Null is the normal answer for a new account, and the caller is expected to
+  /// hide the section rather than show an empty card — you cannot resume
+  /// something you never began.
+  Future<StudyMaterial?> resumeMaterial() async {
+    final row = await _client
+        .from('materials')
+        .select(_materialSelect)
+        .gt('progress', 0)
+        .lt('progress', 1)
+        .order('updated_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+    return row == null ? null : StudyMaterial.fromRow(row);
+  }
+
+  /// The least-progressed unfinished document — what a "study this next"
+  /// suggestion falls back to when there is no quiz history to go on.
+  Future<StudyMaterial?> leastProgressed() async {
+    final row = await _client
+        .from('materials')
+        .select(_materialSelect)
+        .lt('progress', 1)
+        .order('progress')
+        .limit(1)
+        .maybeSingle();
+    return row == null ? null : StudyMaterial.fromRow(row);
+  }
+
   Future<List<SummarySection>> summaryFor(String materialId) async {
     final rows = await _client
         .from('summary_sections')
