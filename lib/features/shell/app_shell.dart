@@ -18,6 +18,7 @@ import '../../core/widgets/widgets.dart';
 import '../chat/chat_screen.dart';
 import '../home/home_screen.dart';
 import '../materials/materials_screen.dart';
+import '../materials/materials_view_model.dart';
 import '../planner/planner_screen.dart';
 import '../profile/profile_screen.dart';
 import 'shell_view_model.dart';
@@ -43,11 +44,20 @@ class AppShell extends ConsumerWidget {
 
   /// System back at the root of the app.
   ///
-  /// Off Home, back returns to Home — the tab bar is lateral navigation, so
-  /// "back" should unwind it before it unwinds the app. On Home there is
+  /// Unwinds the shallowest thing first: a selection, then the tab, then the
+  /// app. Off Home, back returns to Home — the tab bar is lateral navigation,
+  /// so "back" should unwind it before it unwinds the app. On Home there is
   /// nowhere left to go, so ask before leaving rather than dropping the user
   /// out on a stray tap.
   Future<void> _handleBack(BuildContext context, WidgetRef ref) async {
+    // A live selection is a mode, and backing out of a mode should not also
+    // change tab. Losing a multi-select to a stray back would be the same
+    // annoyance as losing a form.
+    if (ref.read(materialSelectionModeProvider)) {
+      ref.read(materialSelectionProvider.notifier).clear();
+      return;
+    }
+
     if (ref.read(shellPageProvider) != ShellPage.home) {
       ref.read(shellPageProvider.notifier).go(ShellPage.home);
       return;

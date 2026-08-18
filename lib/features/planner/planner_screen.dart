@@ -47,6 +47,9 @@ class PlannerScreen extends ConsumerWidget {
     final sf = context.sf;
     final blocks = ref.watch(plannerBlocksProvider);
     final selectedDay = ref.watch(selectedDayProvider);
+    // Null while it loads as well as when there is nothing to say, so the
+    // banner never flashes in and pushes the list down.
+    final note = ref.watch(plannerNoteProvider).value;
 
     final now = DateTime.now();
     final monday = DateTime(now.year, now.month, now.day)
@@ -93,6 +96,20 @@ class PlannerScreen extends ConsumerWidget {
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
+              // Adding a block is a header action, like uploading on
+              // Materials. It used to be a full-width dashed button pinned
+              // above the nav pill, which put the screen's primary action in
+              // its least reachable corner.
+              SfIconButton(
+                icon: Icons.add_rounded,
+                size: 40,
+                iconSize: 20,
+                filled: true,
+                onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Block editor is not built yet')),
+                ),
+              ),
             ],
           ),
         ),
@@ -119,53 +136,9 @@ class PlannerScreen extends ConsumerWidget {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(22, 0, 22, 12),
-          child: GestureDetector(
-            onTap: () => Navigator.of(context).push(
-              sfRoute(builder: (_) => const ExamsScreen()),
-            ),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                borderRadius: AppRadius.brMd,
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [sf.lavenderSoft, sf.indigoSoft],
-                ),
-              ),
-              child: Row(
-                children: [
-                  const FlowOrb(size: 20),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text.rich(
-                      TextSpan(
-                        text: 'Flow planned your day ',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          height: 1.35,
-                          color: context.scheme.primary,
-                        ),
-                        children: [
-                          TextSpan(
-                            text: 'around your Organic Chem final in 9d.',
-                            style: TextStyle(color: sf.ink),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Icon(Icons.chevron_right_rounded,
-                      size: 16, color: context.scheme.primary),
-                ],
-              ),
-            ),
-          ),
-        ),
+        // Absent, not empty, when Flow has nothing to say — see
+        // plannerNoteProvider.
+        if (note != null) _FlowNote(note: note),
         Expanded(
           child: blocks.when(
             loading: () => const SfLoadingList(rows: 4, height: 68),
@@ -174,13 +147,23 @@ class PlannerScreen extends ConsumerWidget {
               onRetry: () => ref.invalidate(plannerBlocksProvider),
             ),
             data: (items) => items.isEmpty
-                ? SfEmptyView(
-                    icon: Icons.event_note_outlined,
-                    title: 'Nothing planned',
-                    body: 'Add a focus block and it will show up here.',
+                // Offset above the nav pill so it reads as centred in the
+                // space that is actually visible.
+                ? Padding(
+                    padding: EdgeInsets.only(
+                      bottom: sfNavContentInset(context, extra: 0),
+                    ),
+                    child: const SfEmptyView(
+                      icon: Icons.event_note_outlined,
+                      title: 'Nothing planned',
+                      body: 'Tap ＋ to add a focus block for this day.',
+                    ),
                   )
                 : ReorderableListView.builder(
-                    padding: const EdgeInsets.fromLTRB(22, 0, 22, 8),
+                    // The list now runs to the bottom of the screen — there is
+                    // no pinned footer left to clear the nav pill for it.
+                    padding: EdgeInsets.fromLTRB(
+                        22, 0, 22, sfNavContentInset(context)),
                     buildDefaultDragHandles: false,
                     itemCount: items.length,
                     onReorderItem:
@@ -200,19 +183,70 @@ class PlannerScreen extends ConsumerWidget {
                   ),
           ),
         ),
-        Padding(
-          // A pinned footer rather than scroll content, so it has to clear the
-          // pill on its own. The extra beyond the pill's own height is what
-          // stops the button reading as part of the nav bar.
-          padding: EdgeInsets.fromLTRB(
-              22, 0, 22, sfNavContentInset(context, extra: 28)),
-          child: _AddBlockButton(
-            onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Block editor is not built yet')),
+      ],
+    );
+  }
+}
+
+/// Flow's line under the week strip. Taps through to Exams, which is where
+/// both of its messages point — either the exam it is counting down to, or the
+/// screen where you add the one it is asking for.
+class _FlowNote extends StatelessWidget {
+  const _FlowNote({required this.note});
+
+  final PlannerNote note;
+
+  @override
+  Widget build(BuildContext context) {
+    final sf = context.sf;
+    final scheme = context.scheme;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 0, 22, 12),
+      child: GestureDetector(
+        onTap: () => Navigator.of(context).push(
+          sfRoute(builder: (_) => const ExamsScreen()),
+        ),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: AppRadius.brMd,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [sf.lavenderSoft, sf.indigoSoft],
             ),
           ),
+          child: Row(
+            children: [
+              const FlowOrb(size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(
+                    text: note.lead,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                      color: scheme.primary,
+                    ),
+                    children: [
+                      TextSpan(
+                        text: note.detail,
+                        style: TextStyle(color: sf.ink),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right_rounded,
+                  size: 16, color: scheme.primary),
+            ],
+          ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -372,39 +406,3 @@ class _BlockRow extends StatelessWidget {
   }
 }
 
-class _AddBlockButton extends StatelessWidget {
-  const _AddBlockButton({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final sf = context.sf;
-    return GestureDetector(
-      onTap: onTap,
-      child: DashedBorderBox(
-        color: context.scheme.outlineVariant,
-        radius: 16,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.add_rounded, size: 16, color: sf.ink3),
-              const SizedBox(width: 6),
-              Text(
-                'Add a study block',
-                style: TextStyle(
-                  fontFamily: AppTextStyles.fontUi,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: sf.ink3,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

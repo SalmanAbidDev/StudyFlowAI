@@ -38,5 +38,11 @@ class AuthRepository {
     return _auth.resetPasswordForEmail(email);
   }
 
+  /// Changes the password of the signed-in user. Supabase refreshes the
+  /// session on success, so this does **not** sign them out.
+  Future<void> updatePassword(String password) {
+    return _auth.updateUser(UserAttributes(password: password));
+  }
+
   Future<void> signOut() => _auth.signOut();
 }

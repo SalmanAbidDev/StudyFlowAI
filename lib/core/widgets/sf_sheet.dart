@@ -27,6 +27,16 @@ Future<T?> showSfSheet<T>(
     backgroundColor: Colors.transparent,
     barrierColor: AppColors.textPrimary.withValues(alpha: 0.45),
     showDragHandle: false,
+    // Without this Flutter caps a sheet at 9/16 of the screen and its content
+    // overflows rather than the sheet growing — which is exactly what the
+    // five-row upload source picker did on a shorter phone. The shell's Column
+    // is still `min`, so short sheets are unaffected; this only lifts the
+    // ceiling. 0.9 keeps a strip of scrim visible so it still reads as a sheet
+    // and not a page.
+    isScrollControlled: true,
+    constraints: BoxConstraints(
+      maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+    ),
     isDismissible: dismissible,
     enableDrag: dismissible,
     builder: builder,
@@ -44,36 +54,50 @@ class SfSheetShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = context.scheme;
 
-    return Container(
-      decoration: BoxDecoration(
-        // The canvas colour, so cards inside sit on it as they do on any other
-        // screen. Using `surface` here would make them vanish into their own
-        // background.
-        color: Theme.of(context).scaffoldBackgroundColor,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        border: Border(top: BorderSide(color: scheme.outline)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Container(
-                  width: 38,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: scheme.outline,
-                    borderRadius: BorderRadius.circular(2),
+    return Padding(
+      // Lifts the sheet clear of the keyboard. A bottom sheet does not do this
+      // on its own: it is laid out against the full screen, so a sheet with a
+      // text field in it sits *behind* the keyboard it just raised. Outside
+      // the SafeArea below, because the two do not stack — with the keyboard
+      // up the bottom inset is zero anyway.
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Container(
+        decoration: BoxDecoration(
+          // The canvas colour, so cards inside sit on it as they do on any
+          // other screen. Using `surface` here would make them vanish into
+          // their own background.
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          border: Border(top: BorderSide(color: scheme.outline)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: scheme.outline,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 18),
-              child,
-            ],
+                const SizedBox(height: 18),
+                // Flexible + scroll rather than a bare child: once the sheet
+                // reaches its ceiling something has to give, and a scroll is
+                // the only answer that does not clip content off the bottom.
+                // The grabber stays pinned above it.
+                Flexible(
+                  child: SingleChildScrollView(child: child),
+                ),
+              ],
+            ),
           ),
         ),
       ),

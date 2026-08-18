@@ -75,27 +75,79 @@ final materialsFilteredToNothingProvider = Provider<bool>((ref) {
   return all.isNotEmpty && ref.watch(visibleMaterialsProvider).isEmpty;
 });
 
-/// Removes a material and, if it came from an upload, its file.
+// ─── Multi-select ─────────────────────────────────────────────────────────
+
+/// The ids currently ticked. **Empty means not in selection mode** — there is
+/// no separate flag to keep in step with the set, which is the usual way this
+/// goes wrong (a mode with nothing selected, or ticks with the mode off).
+class MaterialSelection extends Notifier<Set<String>> {
+  @override
+  Set<String> build() => const {};
+
+  void start(String id) => state = {id};
+
+  /// Unticking the last one leaves selection mode, the same way it does in the
+  /// apps this is modelled on.
+  void toggle(String id) {
+    final next = {...state};
+    if (!next.remove(id)) next.add(id);
+    state = next;
+  }
+
+  void clear() => state = const {};
+}
+
+final materialSelectionProvider =
+    NotifierProvider<MaterialSelection, Set<String>>(MaterialSelection.new);
+
+/// Whether the library is in selection mode at all. Derived, never stored.
+final materialSelectionModeProvider =
+    Provider<bool>((ref) => ref.watch(materialSelectionProvider).isNotEmpty);
+
+/// The selected rows themselves, resolved against the live library so a
+/// deleted-elsewhere id cannot survive as a ghost in the count.
+final selectedMaterialsProvider = Provider<List<StudyMaterial>>((ref) {
+  final ids = ref.watch(materialSelectionProvider);
+  if (ids.isEmpty) return const [];
+  final all = ref.watch(materialsProvider).value ?? const <StudyMaterial>[];
+  return all.where((m) => ids.contains(m.id)).toList();
+});
+
+/// Removes materials and, where they came from an upload, their files.
 ///
-/// The row goes first: the user asked for it to disappear from their library,
-/// and that is the part they can see. A failed file delete leaves an
+/// The row goes first for each: the user asked for it to disappear from their
+/// library, and that is the part they can see. A failed file delete leaves an
 /// unreferenced object in the bucket — wasted space, but invisible and
 /// harmless — whereas a failed row delete after removing the file would leave
 /// a material that opens onto nothing.
-final deleteMaterialProvider =
-    Provider<Future<void> Function(StudyMaterial)>((ref) {
-  return (material) async {
-    await ref.read(libraryRepositoryProvider).deleteMaterial(material.id);
+///
+/// Returns the ones that could not be deleted. A batch is not all-or-nothing,
+/// and reporting "3 deleted" after two succeeded would be the wrong lie in the
+/// wrong direction.
+final deleteMaterialsProvider =
+    Provider<Future<List<StudyMaterial>> Function(List<StudyMaterial>)>((ref) {
+  return (materials) async {
+    final failed = <StudyMaterial>[];
 
-    final path = material.storagePath;
-    if (path != null) {
+    for (final material in materials) {
       try {
-        await ref.read(storageRepositoryProvider).delete(path);
+        await ref.read(libraryRepositoryProvider).deleteMaterial(material.id);
       } catch (_) {
-        // Best effort — see above.
+        failed.add(material);
+        continue;
+      }
+
+      final path = material.storagePath;
+      if (path != null) {
+        try {
+          await ref.read(storageRepositoryProvider).delete(path);
+        } catch (_) {
+          // Best effort — see above.
+        }
       }
     }
 
     ref.invalidate(materialsProvider);
+    return failed;
   };
 });

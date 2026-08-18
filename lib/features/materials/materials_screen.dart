@@ -8,7 +8,7 @@ import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/study_material.dart';
 import '../../data/models/subject.dart';
-import '../summaries/summaries_screen.dart';
+import '../documents/document_screen.dart';
 import '../summaries/summaries_view_model.dart';
 import '../upload/upload_screen.dart';
 import 'materials_view_model.dart';
@@ -31,6 +31,54 @@ class _MaterialsScreenState extends ConsumerState<MaterialsScreen> {
     super.dispose();
   }
 
+  /// The three-dots menu. Only ever holds Delete — a menu whose single item is
+  /// destructive does not need padding out with actions nobody asked for.
+  Future<void> _showSelectionActions(BuildContext context) async {
+    final selected = ref.read(selectedMaterialsProvider);
+    if (selected.isEmpty) return;
+
+    final action = await showSfSheet<_MaterialAction>(
+      context,
+      (_) => _SelectionActionsSheet(count: selected.length),
+    );
+    if (action != _MaterialAction.delete || !context.mounted) return;
+
+    final many = selected.length > 1;
+    final confirmed = await showSfSheet<bool>(
+      context,
+      (_) => SfConfirmSheet(
+        icon: Icons.delete_outline_rounded,
+        title: many
+            ? 'Delete ${selected.length} materials?'
+            : 'Delete this material?',
+        body: many
+            ? 'They will be removed along with their uploaded files, '
+                'summaries, decks and quizzes. This cannot be undone.'
+            : '"${selected.first.title}" and its summary, deck and quizzes '
+                'will be removed. This cannot be undone.',
+        confirmLabel: 'Delete',
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final failed = await ref.read(deleteMaterialsProvider)(selected);
+    ref.read(materialSelectionProvider.notifier).clear();
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          failed.isEmpty
+              ? (many
+                  ? 'Deleted ${selected.length} materials.'
+                  : 'Deleted "${selected.first.title}".')
+              // Names the shortfall rather than claiming a clean sweep.
+              : "Couldn't delete ${failed.length} of ${selected.length}.",
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sf = context.sf;
@@ -39,6 +87,8 @@ class _MaterialsScreenState extends ConsumerState<MaterialsScreen> {
     final library = ref.watch(materialsProvider);
     final items = ref.watch(visibleMaterialsProvider);
     final filteredToNothing = ref.watch(materialsFilteredToNothingProvider);
+    final selected = ref.watch(materialSelectionProvider);
+    final selecting = ref.watch(materialSelectionModeProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -49,10 +99,23 @@ class _MaterialsScreenState extends ConsumerState<MaterialsScreen> {
             children: [
               Expanded(
                 child: Text(
-                  'Materials',
+                  selecting ? '${selected.length} selected' : 'Materials',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: AppTextStyles.displayL.copyWith(color: sf.ink),
                 ),
               ),
+              // Appears only with something to act on, so the menu can never
+              // open onto an empty selection.
+              if (selecting) ...[
+                SfIconButton(
+                  icon: Icons.more_vert_rounded,
+                  size: 40,
+                  iconSize: 20,
+                  onPressed: () => _showSelectionActions(context),
+                ),
+                const SizedBox(width: 8),
+              ],
               SfIconButton(
                 icon: Icons.add_rounded,
                 size: 40,
@@ -65,38 +128,56 @@ class _MaterialsScreenState extends ConsumerState<MaterialsScreen> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(22, 0, 22, 12),
-          child: SfSearchBar(
-            hint: 'Search ${library.value?.length ?? 0} documents…',
-            controller: _search,
-            onChanged: ref.read(materialsQueryProvider.notifier).update,
-            onClear: () {
-              _search.clear();
-              ref.read(materialsQueryProvider.notifier).update('');
-            },
-          ),
+        // Search and the subject pills fold away for the duration: neither is
+        // any use mid-selection, and their absence is what makes the mode
+        // unmistakable.
+        AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: selecting
+              ? const SizedBox(width: double.infinity)
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 0, 22, 12),
+                      child: SfSearchBar(
+                        hint:
+                            'Search ${library.value?.length ?? 0} documents…',
+                        controller: _search,
+                        onChanged:
+                            ref.read(materialsQueryProvider.notifier).update,
+                        onClear: () {
+                          _search.clear();
+                          ref.read(materialsQueryProvider.notifier).update('');
+                        },
+                      ),
+                    ),
+                    // Content-sized so the pills grow with the text rather
+                    // than overflowing a fixed rail height.
+                    if (filters.length > 1)
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 22),
+                        child: Row(
+                          children: [
+                            for (var i = 0; i < filters.length; i++)
+                              _FilterPill(
+                                label: filters[i].label,
+                                count: filters[i].count,
+                                active: i == filter,
+                                isLast: i == filters.length - 1,
+                                onTap: () => ref
+                                    .read(materialsFilterProvider.notifier)
+                                    .update(i),
+                              ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
         ),
-        // Content-sized so the pills grow with the text rather than
-        // overflowing a fixed rail height.
-        if (filters.length > 1)
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 22),
-            child: Row(
-              children: [
-                for (var i = 0; i < filters.length; i++)
-                  _FilterPill(
-                    label: filters[i].label,
-                    count: filters[i].count,
-                    active: i == filter,
-                    isLast: i == filters.length - 1,
-                    onTap: () =>
-                        ref.read(materialsFilterProvider.notifier).update(i),
-                  ),
-              ],
-            ),
-          ),
         const SizedBox(height: 12),
         Expanded(
           child: library.when(
@@ -131,14 +212,13 @@ class _MaterialsScreenState extends ConsumerState<MaterialsScreen> {
                                   .update(0);
                             },
                           )
-                        : SfEmptyView(
+                        // No action button: uploading is the ＋ in the header,
+                        // and one control per job beats the same job offered
+                        // twice on the same screen.
+                        : const SfEmptyView(
                             icon: Icons.description_outlined,
                             title: 'Nothing here yet',
-                            body: 'Upload a PDF or paste your notes to begin.',
-                            actionLabel: 'Upload',
-                            onAction: () => Navigator.of(context).push(
-                              sfModalRoute(builder: (_) => const UploadScreen()),
-                            ),
+                            body: 'Tap ＋ to upload a PDF or paste your notes.',
                           ),
                   )
                 : ListView.separated(
@@ -218,62 +298,34 @@ class _MaterialRow extends ConsumerWidget {
     // doesn't have to guess.
     ref.read(selectedMaterialProvider.notifier).update(material.id);
     Navigator.of(context).push(
-      sfRoute(builder: (_) => const SummariesScreen()),
+      sfRoute(builder: (_) => const DocumentScreen()),
     );
-  }
-
-  Future<void> _showActions(BuildContext context, WidgetRef ref) async {
-    final action = await showSfSheet<_MaterialAction>(
-      context,
-      (_) => _MaterialActionsSheet(material: material),
-    );
-    if (action == null || !context.mounted) return;
-
-    switch (action) {
-      case _MaterialAction.open:
-        _open(context, ref);
-
-      case _MaterialAction.delete:
-        final confirmed = await showSfSheet<bool>(
-          context,
-          (_) => SfConfirmSheet(
-            icon: Icons.delete_outline_rounded,
-            title: 'Delete this material?',
-            body: material.storagePath == null
-                ? '"${material.title}" and its summary, deck and quizzes will '
-                    'be removed. This cannot be undone.'
-                : '"${material.title}", its uploaded file, and its summary, '
-                    'deck and quizzes will be removed. This cannot be undone.',
-            confirmLabel: 'Delete',
-          ),
-        );
-        if (confirmed != true || !context.mounted) return;
-
-        final messenger = ScaffoldMessenger.of(context);
-        try {
-          await ref.read(deleteMaterialProvider)(material);
-          messenger.showSnackBar(
-            SnackBar(content: Text('Deleted "${material.title}".')),
-          );
-        } catch (_) {
-          messenger.showSnackBar(
-            const SnackBar(content: Text("Couldn't delete that. Try again.")),
-          );
-        }
-    }
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
+    final scheme = context.scheme;
     final accent = material.accent.color(context);
+    final selecting = ref.watch(materialSelectionModeProvider);
+    final selected =
+        ref.watch(materialSelectionProvider).contains(material.id);
 
     return SfCard(
       padding: const EdgeInsets.all(14),
-      onTap: () => _open(context, ref),
-      onLongPress: () => _showActions(context, ref),
+      // In selection mode a tap ticks rather than opens — otherwise the two
+      // gestures fight, and opening a document you meant to tick is a
+      // surprise that costs a round trip back.
+      onTap: () => selecting
+          ? ref.read(materialSelectionProvider.notifier).toggle(material.id)
+          : _open(context, ref),
+      onLongPress: () =>
+          ref.read(materialSelectionProvider.notifier).start(material.id),
+      color: selected ? sf.indigoSoft : null,
+      borderColor: selected ? scheme.primary : null,
       child: Row(
         children: [
+          _SelectionBox(visible: selecting, checked: selected),
           SoftIconTile(
             icon: material.icon,
             color: accent,
@@ -336,16 +388,71 @@ class _MaterialRow extends ConsumerWidget {
 }
 
 
-// ─── Long-press actions ───────────────────────────────────────────────────
+// ─── Selection ────────────────────────────────────────────────────────────
 
-enum _MaterialAction { open, delete }
+/// The tick box that slides in on the left of every row when selection starts.
+///
+/// `Align(widthFactor:)` inside a `ClipRect` is what animates the *space* as
+/// well as the box — the rest of the row slides over to make room instead of
+/// the box appearing on top of it.
+class _SelectionBox extends StatelessWidget {
+  const _SelectionBox({required this.visible, required this.checked});
 
-/// What a long-press on a library row offers. Returns the chosen action and
-/// closes; the caller runs it, so confirmation lives outside this sheet.
-class _MaterialActionsSheet extends StatelessWidget {
-  const _MaterialActionsSheet({required this.material});
+  final bool visible;
+  final bool checked;
 
-  final StudyMaterial material;
+  @override
+  Widget build(BuildContext context) {
+    final scheme = context.scheme;
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween(end: visible ? 1 : 0),
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, child) => ClipRect(
+        child: Align(
+          alignment: Alignment.centerLeft,
+          widthFactor: t,
+          child: Opacity(opacity: t, child: child),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.only(right: 12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          width: 22,
+          height: 22,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: checked ? scheme.primary : Colors.transparent,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: checked ? scheme.primary : scheme.outlineVariant,
+              width: 2,
+            ),
+          ),
+          child: checked
+              ? Icon(
+                  Icons.check_rounded,
+                  size: 14,
+                  color: context.isDark ? AppColors.textPrimary : Colors.white,
+                )
+              : null,
+        ),
+      ),
+    );
+  }
+}
+
+enum _MaterialAction { delete }
+
+/// The three-dots menu for the current selection. Returns the chosen action
+/// and closes; the caller confirms and runs it, so this sheet stays ignorant
+/// of what deleting involves.
+class _SelectionActionsSheet extends StatelessWidget {
+  const _SelectionActionsSheet({required this.count});
+
+  final int count;
 
   @override
   Widget build(BuildContext context) {
@@ -356,60 +463,24 @@ class _MaterialActionsSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Naming the document is the whole point: a destructive menu that
-          // does not say what it acts on is how people delete the wrong thing.
+          // Saying how many is the whole point: a destructive menu that does
+          // not state its scope is how people delete more than they meant to.
           Padding(
             padding: const EdgeInsets.only(left: 2, bottom: 14),
-            child: Row(
-              children: [
-                SoftIconTile(
-                  icon: material.icon,
-                  color: material.accent.color(context),
-                  width: 40,
-                  height: 40,
-                  radius: 12,
-                  iconSize: 20,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        material.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontFamily: AppTextStyles.fontUi,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.2,
-                          color: sf.ink,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        material.meta,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12, color: sf.ink3),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            child: Text(
+              count == 1 ? '1 material selected' : '$count materials selected',
+              style: TextStyle(
+                fontFamily: AppTextStyles.fontUi,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.2,
+                color: sf.ink,
+              ),
             ),
           ),
           _SheetAction(
-            icon: Icons.menu_book_outlined,
-            label: 'Open',
-            onTap: () => Navigator.of(context).pop(_MaterialAction.open),
-          ),
-          const SizedBox(height: 8),
-          _SheetAction(
             icon: Icons.delete_outline_rounded,
-            label: 'Delete',
+            label: count == 1 ? 'Delete' : 'Delete $count',
             destructive: true,
             onTap: () => Navigator.of(context).pop(_MaterialAction.delete),
           ),

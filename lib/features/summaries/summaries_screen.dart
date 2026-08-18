@@ -3,12 +3,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/navigation.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/summary_section.dart';
-import '../flashcards/flashcards_screen.dart';
-import '../quiz/quiz_screen.dart';
 import 'summaries_view_model.dart';
 
 class SummariesScreen extends ConsumerWidget {
@@ -136,7 +133,7 @@ class SummariesScreen extends ConsumerWidget {
                         body: 'Flow builds these from an uploaded document.',
                       )
                     : ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(22, 0, 22, 8),
+                        padding: const EdgeInsets.fromLTRB(22, 0, 22, 20),
                         itemCount: items.length,
                         separatorBuilder: (_, _) => const SizedBox(height: 10),
                         itemBuilder: (context, i) => _SummarySectionTile(
@@ -152,42 +149,6 @@ class SummariesScreen extends ConsumerWidget {
               ),
             ),
 
-            // Actions
-            Padding(
-              padding: const EdgeInsets.fromLTRB(22, 12, 22, 16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SfButton(
-                      'Flashcards',
-                      variant: SfButtonVariant.secondary,
-                      icon: Icons.style_outlined,
-                      expand: true,
-                      onPressed: () => Navigator.of(context).push(
-                        sfModalRoute(
-                            builder: (_) => const FlashcardsScreen()),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: SfButton(
-                      'Quiz me',
-                      icon: Icons.help_outline_rounded,
-                      expand: true,
-                      onPressed: () => Navigator.of(context).push(
-                        sfModalRoute(builder: (_) => const QuizScreen()),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  SfButton.iconOnly(
-                    icon: Icons.ios_share_rounded,
-                    onPressed: () {},
-                  ),
-                ],
-              ),
-            ),
           ],
         ),
       ),

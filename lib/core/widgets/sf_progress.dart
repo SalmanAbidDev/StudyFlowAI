@@ -22,6 +22,7 @@ class SfProgress extends StatelessWidget {
     this.color,
     this.track,
     this.height = 6,
+    this.animated = false,
   });
 
   final double? value;
@@ -29,12 +30,27 @@ class SfProgress extends StatelessWidget {
   final Color? track;
   final double height;
 
+  /// Eases between values and runs a highlight across the fill. For work in
+  /// flight — a static bar makes a live transfer look stalled. Leave it off
+  /// for the settled progress on a library row.
+  final bool animated;
+
   @override
   Widget build(BuildContext context) {
     final sf = context.sf;
     final trackColor = track ?? context.scheme.surfaceContainerHigh;
     final gradient =
         color == null ? LinearGradient(colors: [sf.brand, sf.lavender]) : null;
+
+    if (value != null && animated) {
+      return _LiveBar(
+        value: value!.clamp(0.0, 1.0),
+        height: height,
+        color: color,
+        gradient: gradient,
+        track: trackColor,
+      );
+    }
 
     if (value == null) {
       return ClipRRect(
@@ -67,6 +83,107 @@ class SfProgress extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The determinate bar while something is actually moving: the width eases to
+/// each new value instead of stepping, and a soft highlight travels across the
+/// filled part so a slow transfer still reads as alive.
+class _LiveBar extends StatefulWidget {
+  const _LiveBar({
+    required this.value,
+    required this.height,
+    required this.color,
+    required this.gradient,
+    required this.track,
+  });
+
+  final double value;
+  final double height;
+  final Color? color;
+  final Gradient? gradient;
+  final Color track;
+
+  @override
+  State<_LiveBar> createState() => _LiveBarState();
+}
+
+class _LiveBarState extends State<_LiveBar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _sheen;
+
+  @override
+  void initState() {
+    super.initState();
+    _sheen = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _sheen.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(widget.height),
+      child: SizedBox(
+        height: widget.height,
+        // An explicit width from the parent's constraints rather than
+        // FractionallySizedBox, whose default alignment is centre — a fill
+        // that grows from the middle outwards is not a progress bar.
+        child: LayoutBuilder(
+          builder: (context, constraints) => Stack(
+            children: [
+              Positioned.fill(child: ColoredBox(color: widget.track)),
+              TweenAnimationBuilder<double>(
+                tween: Tween(end: widget.value),
+                duration: const Duration(milliseconds: 320),
+                curve: Curves.easeOut,
+                builder: (context, value, _) => SizedBox(
+                  width: constraints.maxWidth * value.clamp(0.0, 1.0),
+                  // The height is not optional. A Stack gives its
+                  // non-positioned children *loose* constraints, and every box
+                  // below here sizes to its child — so without this the fill
+                  // collapses to zero height and only the grey track shows.
+                  height: widget.height,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: widget.color,
+                      gradient: widget.gradient,
+                      borderRadius: BorderRadius.circular(widget.height),
+                    ),
+                    child: AnimatedBuilder(
+                      animation: _sheen,
+                      builder: (context, _) {
+                        final t = _sheen.value * 2 - 1; // -1 → 1
+                        return DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment(t - 0.7, 0),
+                              end: Alignment(t + 0.7, 0),
+                              colors: [
+                                Colors.transparent,
+                                Colors.white.withValues(alpha: 0.35),
+                                Colors.transparent,
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

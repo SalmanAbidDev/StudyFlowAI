@@ -44,47 +44,62 @@ class AnalyticsScreen extends ConsumerWidget {
                       .copyWith(fontSize: 28, color: sf.ink),
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  color: scheme.surface,
-                  borderRadius: AppRadius.brSm,
-                  border: Border.all(color: scheme.outline),
-                ),
-                child: Row(
-                  children: [
-                    for (var i = 0; i < 3; i++)
-                      GestureDetector(
-                        onTap: () =>
-                            ref.read(analyticsRangeProvider.notifier).update(i),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 180),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
+            ],
+          ),
+        ),
+
+        // Its own full-width row under the title. Squeezed into the header it
+        // had to shrink to fit beside the heading, which made three tap
+        // targets out of the space one deserves.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(22, 12, 22, 0),
+          child: Container(
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              borderRadius: AppRadius.brMd,
+              border: Border.all(color: scheme.outline),
+            ),
+            child: Row(
+              children: [
+                for (var i = 0; i < 3; i++)
+                  Expanded(
+                    child: GestureDetector(
+                      // Opaque so the whole third is tappable, not just the
+                      // glyph — a transparent gap between labels would leave
+                      // dead space inside the control.
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () =>
+                          ref.read(analyticsRangeProvider.notifier).update(i),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        padding: const EdgeInsets.symmetric(vertical: 9),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color:
+                              i == range ? scheme.primary : Colors.transparent,
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                        child: Text(
+                          const ['Week', 'Month', 'Year'][i],
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: AppTextStyles.fontUi,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
                             color: i == range
-                                ? scheme.primary
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            const ['Week', 'Month', 'Year'][i],
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: i == range
-                                  ? (context.isDark
-                                      ? AppColors.textPrimary
-                                      : Colors.white)
-                                  : sf.ink3,
-                            ),
+                                ? (context.isDark
+                                    ? AppColors.textPrimary
+                                    : Colors.white)
+                                : sf.ink3,
                           ),
                         ),
                       ),
-                  ],
-                ),
-              ),
-            ],
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
 

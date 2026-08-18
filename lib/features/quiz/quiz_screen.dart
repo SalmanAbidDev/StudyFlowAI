@@ -24,22 +24,46 @@ class QuizScreen extends ConsumerWidget {
     return Scaffold(
       body: SafeArea(
         child: run.when(
-          loading: () => const SfLoadingList(rows: 5, height: 90),
-          error: (error, _) => SfErrorView(
-            error: error,
-            onRetry: () => ref.invalidate(quizProvider),
+          loading: () => const _Framed(
+            child: SfLoadingList(rows: 5, height: 90),
+          ),
+          error: (error, _) => _Framed(
+            child: SfErrorView(
+              error: error,
+              onRetry: () => ref.invalidate(quizProvider),
+            ),
           ),
           data: (data) => data.isEmpty
-              ? SfEmptyView(
-                  icon: Icons.quiz_outlined,
-                  title: 'No quiz yet',
-                  body: 'Upload a document and Flow will build one from it.',
-                  actionLabel: 'Back',
-                  onAction: () => Navigator.of(context).maybePop(),
+              // Dismissed with the header's ✕, not with a button sitting in
+              // the middle of the page.
+              ? const _Framed(
+                  child: SfEmptyView(
+                    icon: Icons.quiz_outlined,
+                    title: 'No quiz yet',
+                    body: 'Upload a document and Flow will build one from it.',
+                  ),
                 )
               : _QuizBody(run: data),
         ),
       ),
+    );
+  }
+}
+
+/// Chrome for the states with no run to show. The playing branch draws its own
+/// header, because it carries the progress rail and the clock.
+class _Framed extends StatelessWidget {
+  const _Framed({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const SfModalHeader(title: 'Quiz'),
+        Expanded(child: child),
+      ],
     );
   }
 }

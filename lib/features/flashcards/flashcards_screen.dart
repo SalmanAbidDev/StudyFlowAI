@@ -25,10 +25,20 @@ class FlashcardsScreen extends ConsumerStatefulWidget {
 /// through AnimatedBuilder. Only the deck position is shared state.
 class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
     with SingleTickerProviderStateMixin {
-  late final AnimationController flip = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 600),
-  );
+  // Built in initState, not as a `late final` initialiser. When the deck is
+  // empty nothing in build() ever reads `flip`, so the initialiser would first
+  // run inside dispose() — constructing a Ticker against an element that is
+  // already deactivated, which throws.
+  late final AnimationController flip;
+
+  @override
+  void initState() {
+    super.initState();
+    flip = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+  }
 
   bool get _showingBack => flip.value > 0.5;
 
@@ -60,23 +70,50 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
     return Scaffold(
       body: SafeArea(
         child: deck.when(
-          loading: () => const SfLoadingList(rows: 3, height: 120),
-          error: (error, _) => SfErrorView(
-            error: error,
-            onRetry: () => ref.invalidate(deckProvider),
+          loading: () => const _Framed(
+            child: SfLoadingList(rows: 3, height: 120),
+          ),
+          error: (error, _) => _Framed(
+            child: SfErrorView(
+              error: error,
+              onRetry: () => ref.invalidate(deckProvider),
+            ),
           ),
           data: (data) => (data == null || data.cards.isEmpty)
-              ? SfEmptyView(
-                  icon: Icons.style_outlined,
-                  title: 'No cards yet',
-                  body: 'Upload a document and Flow will build a deck from it.',
-                  actionLabel: 'Back',
-                  onAction: () => Navigator.of(context).maybePop(),
+              // No action button: the way out is the ✕ in the header, and a
+              // second dismiss control in the middle of the page was the
+              // "back button floating in the body" this screen used to have.
+              ? const _Framed(
+                  child: SfEmptyView(
+                    icon: Icons.style_outlined,
+                    title: 'No cards yet',
+                    body:
+                        'Upload a document and Flow will build a deck from it.',
+                  ),
                 )
               : _DeckBody(deck: data, flip: flip, onFlip: _toggleFace,
                   onStep: (delta) => _step(delta, data.cards.length)),
         ),
       ),
+    );
+  }
+}
+
+/// The states with no deck to describe still need the screen's chrome —
+/// otherwise there is nothing to close them with. The populated branch draws
+/// its own header, because it carries the deck title and card counter.
+class _Framed extends StatelessWidget {
+  const _Framed({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const SfModalHeader(title: 'Flashcards'),
+        Expanded(child: child),
+      ],
     );
   }
 }

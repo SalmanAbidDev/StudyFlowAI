@@ -39,7 +39,10 @@ dependencies:
   path: ^1.9.1
   file_selector: ^1.1.0
   shared_preferences: ^2.5.5
-
+  image_picker: ^1.2.3
+  http: ^1.6.0
+  webview_flutter: ^4.14.1
+  pdfrx: ^2.4.7
 dev_dependencies:
   flutter_test:
     sdk: flutter

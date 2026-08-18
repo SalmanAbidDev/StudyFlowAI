@@ -45,36 +45,12 @@ class LibraryRepository {
     return row == null ? null : StudyMaterial.fromRow(row);
   }
 
-  /// The document to offer as "pick up where you left off": genuinely started
-  /// but not finished, most recently touched first.
-  ///
-  /// Null is the normal answer for a new account, and the caller is expected to
-  /// hide the section rather than show an empty card — you cannot resume
-  /// something you never began.
-  Future<StudyMaterial?> resumeMaterial() async {
-    final row = await _client
-        .from('materials')
-        .select(_materialSelect)
-        .gt('progress', 0)
-        .lt('progress', 1)
-        .order('updated_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
-    return row == null ? null : StudyMaterial.fromRow(row);
-  }
-
-  /// The least-progressed unfinished document — what a "study this next"
-  /// suggestion falls back to when there is no quiz history to go on.
-  Future<StudyMaterial?> leastProgressed() async {
-    final row = await _client
-        .from('materials')
-        .select(_materialSelect)
-        .lt('progress', 1)
-        .order('progress')
-        .limit(1)
-        .maybeSingle();
-    return row == null ? null : StudyMaterial.fromRow(row);
-  }
+  // `resumeMaterial()` and `leastProgressed()` used to live here, each its own
+  // ordered query. They are gone on purpose: a second source of truth about
+  // the library is a second thing every writer has to remember to invalidate,
+  // and the one that got forgotten left Home recommending a deleted document.
+  // Both answers are now derived from `materials()` — see
+  // `resumeMaterialProvider` and `flowSuggestionProvider`.
 
   Future<List<SummarySection>> summaryFor(String materialId) async {
     final rows = await _client
@@ -102,6 +78,7 @@ class LibraryRepository {
     required String title,
     String? subjectId,
     String? storagePath,
+    String? sourceUrl,
     String? mimeType,
     int? byteSize,
     int? pageCount,
@@ -113,6 +90,7 @@ class LibraryRepository {
           'title': title,
           'subject_id': ?subjectId,
           'storage_path': ?storagePath,
+          'source_url': ?sourceUrl,
           'mime_type': ?mimeType,
           'byte_size': ?byteSize,
           'page_count': ?pageCount,
@@ -124,5 +102,43 @@ class LibraryRepository {
 
   Future<void> deleteMaterial(String materialId) {
     return _client.from('materials').delete().eq('id', materialId);
+  }
+
+  /// The subject called [name], creating it if this user has no such row yet.
+  ///
+  /// Matching happens in Dart rather than with `ilike`, for two reasons: the
+  /// list is a handful of rows, and a name containing `%` or `_` would be read
+  /// as a wildcard by the server. `subjects` has no unique constraint on
+  /// (user_id, name), so this is the only thing standing between the library
+  /// and two categories with the same label.
+  Future<Subject> ensureSubject({
+    required String userId,
+    required String name,
+    SubjectAccent accent = SubjectAccent.indigo,
+    String iconKey = 'book',
+  }) async {
+    final trimmed = name.trim();
+    final existing = await subjects();
+    for (final subject in existing) {
+      if (subject.name.toLowerCase() == trimmed.toLowerCase()) return subject;
+    }
+
+    final row = await _client
+        .from('subjects')
+        .insert({
+          'user_id': userId,
+          'name': trimmed,
+          'accent': accent.wireName,
+          'icon': iconKey,
+        })
+        .select()
+        .single();
+    return Subject.fromRow(row);
+  }
+
+  Future<void> setMaterialSubject(String materialId, String subjectId) {
+    return _client
+        .from('materials')
+        .update({'subject_id': subjectId}).eq('id', materialId);
   }
 }

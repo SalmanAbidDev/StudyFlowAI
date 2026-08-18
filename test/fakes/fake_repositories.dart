@@ -5,6 +5,9 @@
 // HTTP — while still exercising the real view models, providers and widgets
 // above them.
 
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:ai_study_helper/data/models/exam.dart';
 import 'package:ai_study_helper/data/models/flashcard.dart';
 import 'package:ai_study_helper/data/models/profile.dart';
@@ -40,7 +43,7 @@ StudyMaterial _material(String id, String title, String subject,
 class FakeLibraryRepository implements LibraryRepository {
   /// [empty] models a brand-new account, which is what Home's conditional
   /// sections have to be tested against.
-  FakeLibraryRepository({bool empty = false})
+  FakeLibraryRepository({this.empty = false})
       : _materials = empty
             ? []
             : [
@@ -50,29 +53,76 @@ class FakeLibraryRepository implements LibraryRepository {
                     SubjectAccent.emerald, 1),
               ];
 
+  final bool empty;
   final List<StudyMaterial> _materials;
 
+  /// A copy, not the backing list. The real repository builds a fresh list per
+  /// call and can never hand back something the caller is still iterating —
+  /// returning `_materials` directly let a delete loop mutate the list it was
+  /// walking, which is a failure the app could never actually have.
   @override
-  Future<List<StudyMaterial>> materials() async => _materials;
+  Future<List<StudyMaterial>> materials() async => List.of(_materials);
 
   @override
   Future<StudyMaterial?> latestMaterial() async =>
       _materials.isEmpty ? null : _materials.first;
 
-  @override
-  Future<StudyMaterial?> resumeMaterial() async => _materials
-      .where((m) => m.progress > 0 && m.progress < 1)
-      .firstOrNull;
+  // No `resumeMaterial` or `leastProgressed` stubs any more — both are derived
+  // from `materials()` now, so the fake only has to answer the one question.
 
-  @override
-  Future<StudyMaterial?> leastProgressed() async {
-    final unfinished = _materials.where((m) => m.progress < 1).toList()
-      ..sort((a, b) => a.progress.compareTo(b.progress));
-    return unfinished.firstOrNull;
+  final _subjects = <Subject>[
+    const Subject(
+      id: 'sub-1',
+      name: 'Organic Chemistry',
+      accent: SubjectAccent.indigo,
+      iconKey: 'science',
+    ),
+  ];
+
+  /// Records what the category screen filed, so a test can assert on the
+  /// result rather than only on the navigation.
+  final filed = <String, String>{};
+
+  /// The category name a material ended up under, resolved through the id the
+  /// screen actually wrote.
+  String? named(String materialId) {
+    final id = filed[materialId];
+    if (id == null) return null;
+    for (final subject in _subjects) {
+      if (subject.id == id) return subject.name;
+    }
+    return null;
   }
 
   @override
-  Future<List<Subject>> subjects() async => const [];
+  Future<List<Subject>> subjects() async => empty ? const [] : _subjects;
+
+  @override
+  Future<Subject> ensureSubject({
+    required String userId,
+    required String name,
+    SubjectAccent accent = SubjectAccent.indigo,
+    String iconKey = 'book',
+  }) async {
+    for (final subject in _subjects) {
+      if (subject.name.toLowerCase() == name.trim().toLowerCase()) {
+        return subject;
+      }
+    }
+    final created = Subject(
+      id: 'sub-${_subjects.length + 1}',
+      name: name.trim(),
+      accent: accent,
+      iconKey: iconKey,
+    );
+    _subjects.add(created);
+    return created;
+  }
+
+  @override
+  Future<void> setMaterialSubject(String materialId, String subjectId) async {
+    filed[materialId] = subjectId;
+  }
 
   @override
   Future<List<SummarySection>> summaryFor(String materialId) async => const [
@@ -96,14 +146,25 @@ class FakeLibraryRepository implements LibraryRepository {
     required String title,
     String? subjectId,
     String? storagePath,
+    String? sourceUrl,
     String? mimeType,
     int? byteSize,
     int? pageCount,
-  }) async =>
-      _material('new', title, 'Unfiled', SubjectAccent.indigo, 0);
+  }) async {
+    final created = _material('new', title, 'Unfiled', SubjectAccent.indigo, 0);
+    _materials.insert(0, created);
+    return created;
+  }
+
+  /// What was actually removed, so a test can prove a cancelled confirmation
+  /// deleted nothing rather than only that the sheet closed.
+  final deleted = <String>[];
 
   @override
-  Future<void> deleteMaterial(String materialId) async {}
+  Future<void> deleteMaterial(String materialId) async {
+    deleted.add(materialId);
+    _materials.removeWhere((m) => m.id == materialId);
+  }
 }
 
 class FakePlannerRepository implements PlannerRepository {
@@ -145,6 +206,22 @@ class FakePlannerRepository implements PlannerRepository {
     ),
   ];
 
+  /// Three days running, ending today, with 90 minutes on each — enough to
+  /// tell a real streak from a hard-coded one.
+  @override
+  Future<List<CompletedBlock>> completedBlocks() async {
+    if (empty) return const [];
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return [
+      for (var i = 0; i < 3; i++)
+        CompletedBlock(
+          day: today.subtract(Duration(days: i)),
+          minutes: 90,
+        ),
+    ];
+  }
+
   @override
   Future<List<StudyBlock>> blocksOn(DateTime day) async => empty ? [] : _blocks;
 
@@ -176,17 +253,23 @@ class FakePlannerRepository implements PlannerRepository {
 }
 
 class FakeStudyRepository implements StudyRepository {
-  FakeStudyRepository({this.attempt});
+  FakeStudyRepository({this.attempt, this.empty = false});
 
   /// Null means "no quiz finished yet", which is what Home's suggestion card
   /// falls back from.
   final QuizAttempt? attempt;
 
+  /// No deck and no quiz — the state where those screens have nothing to show
+  /// and must still offer a way out.
+  final bool empty;
+
   @override
   Future<QuizAttempt?> latestAttempt() async => attempt;
 
   @override
-  Future<Deck?> firstDeck() async => const Deck(
+  Future<Deck?> firstDeck() async => empty
+      ? null
+      : const Deck(
         id: 'd1',
         title: 'Stereochemistry',
         cards: [
@@ -215,7 +298,9 @@ class FakeStudyRepository implements StudyRepository {
   }) async {}
 
   @override
-  Future<Quiz?> firstQuiz() async => const Quiz(
+  Future<Quiz?> firstQuiz() async => empty
+      ? null
+      : const Quiz(
         id: 'q1',
         title: 'Stereochemistry check',
         questions: [
@@ -303,6 +388,9 @@ class FakeAnalyticsRepository implements AnalyticsRepository {
       );
 
   @override
+  Future<int> masteredCount() async => 342;
+
+  @override
   Future<void> logSession({
     required String userId,
     required int durationMinutes,
@@ -339,8 +427,34 @@ class FakeStorageRepository implements StorageRepository {
     required String userId,
     required dynamic file,
     required String fileName,
-  }) async =>
-      '$userId/$fileName';
+    String? contentType,
+    void Function(double sent)? onProgress,
+  }) async {
+    // Drive the readout the way a real transfer would, so a test can assert on
+    // a partial percentage rather than only on 0 and 100.
+    onProgress?.call(0.5);
+    return '$userId/$fileName';
+  }
+
+  /// What was written as a text material, so a test can check the note's body
+  /// actually reached storage rather than only that the screen navigated.
+  final texts = <String, String>{};
+
+  @override
+  Future<String> uploadText({
+    required String userId,
+    required String fileName,
+    required String text,
+  }) async {
+    texts[fileName] = text;
+    return '$userId/$fileName';
+  }
+
+  /// A tiny UTF-8 body, so the text viewer has something to render and the
+  /// image/PDF branches get bytes rather than null.
+  @override
+  Future<Uint8List> download(String path) async =>
+      Uint8List.fromList(utf8.encode('Fake document body for $path'));
 
   @override
   Future<String> signedUrl(String path, {Duration ttl = const Duration(hours: 1)}) async =>

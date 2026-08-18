@@ -12,7 +12,9 @@ import '../auth/auth_screen.dart';
 import '../auth/auth_view_model.dart';
 import '../home/home_view_model.dart';
 import '../premium/premium_screen.dart';
+import 'account_screen.dart';
 import 'achievements_screen.dart';
+import 'profile_view_model.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -22,6 +24,8 @@ class ProfileScreen extends ConsumerWidget {
     final sf = context.sf;
     final scheme = context.scheme;
     final profile = ref.watch(profileProvider).value;
+    final stats = ref.watch(profileStatsProvider).value;
+    final notifications = ref.watch(notificationsProvider);
     final achievements = ref.watch(achievementsProvider).value ?? const [];
     final earnedCount = achievements.where((a) => a.earned).length;
     final email = ref.watch(sessionProvider)?.user.email ?? '';
@@ -109,10 +113,24 @@ class ProfileScreen extends ConsumerWidget {
               const SizedBox(height: 18),
               Row(
                 children: [
+                  // Dashes until the numbers arrive. A zero that turns into
+                  // 12 a moment later reads as a stat that just went up.
                   for (final s in <({String label, String value, Color color})>[
-                    (label: 'Streak', value: '12d', color: sf.coralInk),
-                    (label: 'Studied', value: '124h', color: scheme.primary),
-                    (label: 'Mastered', value: '342', color: sf.emeraldInk),
+                    (
+                      label: 'Streak',
+                      value: stats?.streakLabel ?? '—',
+                      color: sf.coralInk
+                    ),
+                    (
+                      label: 'Studied',
+                      value: stats?.studiedLabel ?? '—',
+                      color: scheme.primary
+                    ),
+                    (
+                      label: 'Mastered',
+                      value: stats?.masteredLabel ?? '—',
+                      color: sf.emeraldInk
+                    ),
                   ]) ...[
                     Expanded(
                       child: Padding(
@@ -291,13 +309,21 @@ class ProfileScreen extends ConsumerWidget {
                     icon: Icons.settings_outlined,
                     label: 'Account',
                     detail: 'Email, password',
-                    onTap: () {},
+                    onTap: () => Navigator.of(context).push(
+                      sfRoute(builder: (_) => const AccountScreen()),
+                    ),
                   ),
+                  // A switch, not a chevron: there is one thing to decide and
+                  // it is on or off, so a screen to decide it on would be a
+                  // screen with a single switch in it.
                   _SettingsRow(
                     icon: Icons.notifications_none_rounded,
                     label: 'Notifications',
-                    detail: 'Daily reminders on',
-                    onTap: () {},
+                    detail: notifications
+                        ? 'Daily reminders on'
+                        : 'Daily reminders off',
+                    toggle: notifications,
+                    onToggle: ref.read(notificationsProvider.notifier).set,
                   ),
                   _SettingsRow(
                     icon: Icons.visibility_outlined,
@@ -312,11 +338,6 @@ class ProfileScreen extends ConsumerWidget {
                     onTap: () => Navigator.of(context).push(
                       sfRoute(builder: (_) => const AnalyticsScreen()),
                     ),
-                  ),
-                  _SettingsRow(
-                    icon: Icons.volume_up_outlined,
-                    label: 'Sounds & haptics',
-                    onTap: () {},
                   ),
                 ],
               ),
@@ -620,23 +641,34 @@ class _SettingsRow extends StatelessWidget {
     required this.label,
     this.detail,
     this.danger = false,
-    required this.onTap,
-  });
+    this.onTap,
+    this.toggle,
+    this.onToggle,
+  })  : assert(onTap != null || onToggle != null, 'the row must do something'),
+        assert(toggle == null || onToggle != null, 'a switch needs a handler');
 
   final IconData icon;
   final String label;
   final String? detail;
   final bool danger;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+
+  /// Non-null turns the row into a switch: the chevron goes, because a row
+  /// that both toggles and navigates promises two different things.
+  final bool? toggle;
+  final ValueChanged<bool>? onToggle;
 
   @override
   Widget build(BuildContext context) {
     final sf = context.sf;
     final scheme = context.scheme;
     final tint = danger ? sf.coralInk : sf.ink;
+    final switching = toggle != null;
 
     return InkWell(
-      onTap: onTap,
+      // Tapping anywhere on a switch row flips it, which is a bigger target
+      // than the switch itself.
+      onTap: switching ? () => onToggle!(!toggle!) : onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
@@ -676,7 +708,16 @@ class _SettingsRow extends StatelessWidget {
                 ],
               ),
             ),
-            if (!danger)
+            if (switching)
+              Switch.adaptive(
+                value: toggle!,
+                onChanged: onToggle,
+                activeThumbColor: context.isDark
+                    ? AppColors.textPrimary
+                    : Colors.white,
+                activeTrackColor: scheme.primary,
+              )
+            else if (!danger)
               Icon(Icons.chevron_right_rounded, size: 18, color: sf.ink4),
           ],
         ),

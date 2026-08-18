@@ -14,13 +14,14 @@ import '../../data/models/study_material.dart';
 import '../../data/models/subject.dart';
 import '../materials/materials_view_model.dart';
 import '../planner/planner_view_model.dart';
+import '../profile/profile_view_model.dart';
 import '../summaries/summaries_view_model.dart';
 import '../chat/chat_screen.dart';
 import '../exams/exams_screen.dart';
 import '../flashcards/flashcards_screen.dart';
 import '../quiz/quiz_screen.dart';
 import '../shell/shell_view_model.dart';
-import '../summaries/summaries_screen.dart';
+import '../documents/document_screen.dart';
 import '../upload/upload_screen.dart';
 import 'home_view_model.dart';
 
@@ -76,7 +77,7 @@ class HomeScreen extends ConsumerWidget {
                         .read(selectedMaterialProvider.notifier)
                         .update(resume.id);
                     Navigator.of(context).push(
-                      sfRoute(builder: (_) => const SummariesScreen()),
+                      sfRoute(builder: (_) => const DocumentScreen()),
                     );
                   },
                 ),
@@ -207,7 +208,7 @@ class HomeScreen extends ConsumerWidget {
                             .update(d.id);
                         Navigator.of(context).push(
                           sfRoute(
-                              builder: (_) => const SummariesScreen()),
+                              builder: (_) => const DocumentScreen()),
                         );
                       },
                       child: Column(
@@ -529,7 +530,10 @@ class _StreakHero extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
-    final streak = ref.watch(profileProvider).value?.streakDays ?? 0;
+    // The same derived count Profile shows. It used to read
+    // `profiles.streak_days`, a stored column nothing ever writes — so the two
+    // screens would have disagreed the moment one of them became real.
+    final streak = ref.watch(profileStatsProvider).value?.streakDays ?? 0;
     // Today's plan is the ring: how much of what you scheduled is done.
     final blocks = ref.watch(todayBlocksProvider).value ?? const [];
     final done = blocks.where((b) => b.done).length;

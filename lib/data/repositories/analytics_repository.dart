@@ -107,10 +107,7 @@ class AnalyticsRepository {
         .toList()
       ..sort((a, b) => b.hours.compareTo(a.hours));
 
-    final mastered = await _client
-        .from('flashcards')
-        .count(CountOption.exact)
-        .gte('interval_days', 21);
+    final mastered = await masteredCount();
 
     return StudyStats(
       weeklyHours: buckets,
@@ -119,6 +116,19 @@ class AnalyticsRepository {
       cardsMastered: mastered,
       subjectSplit: split,
     );
+  }
+
+  /// Cards whose review interval has reached three weeks — the usual line
+  /// between "seen it" and "know it" in a spaced-repetition schedule.
+  ///
+  /// Deliberately not part of [stats]'s range filter: mastery is a running
+  /// total, not something that happened this week, so it must not change when
+  /// the Insights header switches between Week and Year.
+  Future<int> masteredCount() {
+    return _client
+        .from('flashcards')
+        .count(CountOption.exact)
+        .gte('interval_days', 21);
   }
 
   Future<void> logSession({

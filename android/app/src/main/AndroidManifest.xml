@@ -4,6 +4,25 @@
          worked. -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
+    <!-- Reading a picked file. Scoped to API 32 and below: from Android 13 the
+         system photo picker and the Storage Access Framework hand back a URI
+         the app is already granted, so no storage permission is involved. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
+
+    <!-- The camera is used through ACTION_IMAGE_CAPTURE, which the camera app
+         services on our behalf.
+
+         android.permission.CAMERA is deliberately NOT declared. It is not
+         required for the capture intent, and declaring it actively breaks the
+         feature: once an app holds the declaration, the platform refuses to
+         launch ACTION_IMAGE_CAPTURE until the permission has also been granted
+         at runtime — and nothing in this app requests runtime permissions.
+         Adding the line without adding that plumbing turns "Scan with camera"
+         into a SecurityException. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
+
     <application
         android:label="ai_study_helper"
         android:name="${applicationName}"
@@ -45,6 +64,22 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+
+        <!-- Package visibility, required from Android 11. Without these the
+             intents below resolve to nothing and the picker silently fails to
+             open even though the app that handles it is installed. -->
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT"/>
+            <data android:mimeType="image/*"/>
+        </intent>
+        <!-- The PDF entry, via file_selector's Storage Access Framework. -->
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT"/>
+            <data android:mimeType="application/pdf"/>
         </intent>
     </queries>
 </manifest>

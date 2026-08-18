@@ -70,6 +70,15 @@ class FakeAuthRepository implements AuthRepository {
   @override
   Future<void> sendPasswordReset(String email) async {}
 
+  /// The last password accepted, so a test can prove the change reached the
+  /// repository rather than only that the sheet closed.
+  String? changedPassword;
+
+  @override
+  Future<void> updatePassword(String password) async {
+    changedPassword = password;
+  }
+
   @override
   Future<void> signOut() async {
     _session = null;

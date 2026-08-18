@@ -47,28 +47,38 @@ class SfButton extends StatelessWidget {
     this.variant = SfButtonVariant.primary,
     this.size = SfButtonSize.md,
     this.icon,
+    this.leading,
     this.trailingIcon,
     this.expand = false,
     this.busy = false,
   });
 
-  /// Icon-only square button (used for the share action on Summaries).
+  /// Icon-only square button. Takes either an [icon] glyph or a [leading]
+  /// widget — the Flow orb is painted, not a font character.
   const SfButton.iconOnly({
     super.key,
-    required this.icon,
+    this.icon,
+    this.leading,
     this.onPressed,
     this.variant = SfButtonVariant.secondary,
     this.size = SfButtonSize.md,
   })  : label = '',
         trailingIcon = null,
         expand = false,
-        busy = false;
+        busy = false,
+        assert(icon != null || leading != null, 'give it something to show');
 
   final String label;
   final VoidCallback? onPressed;
   final SfButtonVariant variant;
   final SfButtonSize size;
   final IconData? icon;
+
+  /// A widget in the leading slot instead of an icon glyph — the Flow orb,
+  /// which is a painted thing rather than a font character. Wins over [icon]
+  /// when both are set.
+  final Widget? leading;
+
   final IconData? trailingIcon;
   final bool expand;
 
@@ -158,8 +168,12 @@ class SfButton extends StatelessWidget {
       mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        if (icon != null) Icon(icon, size: spec.fs + 3, color: style.fg),
-        if (icon != null && !iconOnly) SizedBox(width: spec.gap),
+        if (leading != null)
+          leading!
+        else if (icon != null)
+          Icon(icon, size: spec.fs + 3, color: style.fg),
+        if ((leading != null || icon != null) && !iconOnly)
+          SizedBox(width: spec.gap),
         if (!iconOnly)
           Flexible(
             child: Text(
@@ -298,6 +312,7 @@ class SfCard extends StatelessWidget {
     this.onLongPress,
     this.color,
     this.gradient,
+    this.borderColor,
     this.radius = AppRadius.lg,
     this.clip = false,
   });
@@ -311,6 +326,11 @@ class SfCard extends StatelessWidget {
   final VoidCallback? onLongPress;
   final Color? color;
   final Gradient? gradient;
+
+  /// Overrides the hairline. For a card that is picked out from its
+  /// neighbours — a selected row — rather than for decoration.
+  final Color? borderColor;
+
   final double radius;
   final bool clip;
 
@@ -338,7 +358,7 @@ class SfCard extends StatelessWidget {
         color: gradient == null ? (color ?? scheme.surface) : null,
         gradient: gradient,
         borderRadius: br,
-        border: Border.all(color: scheme.outline),
+        border: Border.all(color: borderColor ?? scheme.outline),
         boxShadow:
             AppShadows.resolve(AppShadows.sm, Theme.of(context).brightness),
       ),
@@ -650,6 +670,8 @@ class SfField extends StatelessWidget {
     this.icon,
     this.trailingIcon,
     this.onTrailingTap,
+    this.trailing,
+    this.onChanged,
     this.obscure = false,
     this.keyboardType,
   });
@@ -659,6 +681,13 @@ class SfField extends StatelessWidget {
   final IconData? icon;
   final IconData? trailingIcon;
   final VoidCallback? onTrailingTap;
+
+  /// A widget in the trailing slot instead of a tappable icon — a spinner or
+  /// a validation mark that belongs beside the text it judges. Wins over
+  /// [trailingIcon] when both are set.
+  final Widget? trailing;
+
+  final ValueChanged<String>? onChanged;
   final bool obscure;
   final TextInputType? keyboardType;
 
@@ -685,6 +714,7 @@ class SfField extends StatelessWidget {
                 controller: controller,
                 obscureText: obscure,
                 keyboardType: keyboardType,
+                onChanged: onChanged,
                 style: TextStyle(
                   fontFamily: AppTextStyles.fontUi,
                   fontSize: 15,
@@ -708,7 +738,9 @@ class SfField extends StatelessWidget {
               ),
             ),
           ),
-          if (trailingIcon != null)
+          if (trailing != null)
+            trailing!
+          else if (trailingIcon != null)
             GestureDetector(
               onTap: onTrailingTap,
               child: Icon(trailingIcon, size: 18, color: sf.ink3),

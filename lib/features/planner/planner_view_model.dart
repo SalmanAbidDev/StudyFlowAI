@@ -6,6 +6,9 @@ import '../../core/view_models.dart';
 import '../../data/models/exam.dart';
 import '../../data/models/study_block.dart';
 import '../../data/supabase_providers.dart';
+import '../home/home_view_model.dart';
+import '../materials/materials_view_model.dart';
+import '../profile/profile_view_model.dart';
 
 /// Index into the week strip, Monday first.
 final selectedDayProvider = NotifierProvider<ValueViewModel<int>, int>(
@@ -56,6 +59,11 @@ class PlannerBlocks extends AsyncNotifier<List<StudyBlock>> {
         .read(plannerRepositoryProvider)
         .setBlockDone(block.id, done: !block.done);
     ref.invalidateSelf();
+    // Same fan-out as `toggleBlockDoneProvider` — ticking a block from the
+    // Planner has to move the streak just as ticking it from Home does.
+    ref.invalidate(todayBlocksProvider);
+    ref.invalidate(profileStatsProvider);
+    ref.invalidate(weekActivityProvider);
   }
 }
 
@@ -78,6 +86,10 @@ final toggleBlockDoneProvider =
         .setBlockDone(block.id, done: !block.done);
     ref.invalidate(todayBlocksProvider);
     ref.invalidate(plannerBlocksProvider);
+    // The streak, the hours studied and the week strip are all counts of
+    // completed blocks — one of which just changed.
+    ref.invalidate(profileStatsProvider);
+    ref.invalidate(weekActivityProvider);
   };
 });
 
@@ -90,3 +102,53 @@ final nextExamProvider = Provider<Exam?>((ref) {
   final exams = ref.watch(upcomingExamsProvider).value;
   return (exams == null || exams.isEmpty) ? null : exams.first;
 });
+
+// ─── Flow's note on the Planner ───────────────────────────────────────────
+
+/// The two-tone line under the week strip. [lead] is drawn in the brand
+/// colour, [detail] in ink — the same split the hard-coded version had.
+class PlannerNote {
+  const PlannerNote({required this.lead, required this.detail});
+
+  final String lead;
+  final String detail;
+}
+
+/// What Flow says above the day's blocks, or nothing at all.
+///
+/// Like Home's suggestion this is a **rule, not a model** (§9 of
+/// CluadeWork.md). It used to read "Flow planned your day around your Organic
+/// Chem final in 9d" on every account, including empty ones that had never
+/// uploaded a thing — a claim about work Flow had not done, about an exam that
+/// did not exist.
+///
+/// The gate is having uploaded something: with no material there is nothing to
+/// plan *from*, so the banner is absent rather than aspirational.
+final plannerNoteProvider = FutureProvider<PlannerNote?>((ref) async {
+  // Watches the library rather than asking for the latest material on its own,
+  // so deleting everything takes this banner with it. See
+  // `resumeMaterialProvider` for why every library question is derived.
+  final materials = await ref.watch(materialsProvider.future);
+  if (materials.isEmpty) return null;
+
+  final exams = await ref.watch(upcomingExamsProvider.future);
+  if (exams.isEmpty) {
+    return const PlannerNote(
+      lead: 'Flow can plan your week ',
+      detail: 'once you add an exam date to work back from.',
+    );
+  }
+
+  final exam = exams.first;
+  return PlannerNote(
+    lead: 'Flow is planning around ',
+    detail: 'your ${exam.title} ${_when(exam.daysLeft)}.',
+  );
+});
+
+/// "in 9d" reads fine at a distance and badly up close — "in 0d" is today.
+String _when(int daysLeft) => switch (daysLeft) {
+      <= 0 => 'today',
+      1 => 'tomorrow',
+      _ => 'in ${daysLeft}d',
+    };

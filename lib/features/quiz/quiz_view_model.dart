@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/quiz.dart';
 import '../../data/supabase_providers.dart';
+import '../home/home_view_model.dart';
 
 const _perQuestionSeconds = 42;
 
@@ -154,6 +155,11 @@ class QuizController extends AsyncNotifier<QuizRun> {
             elapsedSeconds: run.elapsed,
             missed: run.missed,
           );
+
+      // Flow's suggestion reads the latest attempt first, so a finished quiz
+      // changes what it should say. Without this it kept recommending the
+      // review you had just done.
+      ref.invalidate(flowSuggestionProvider);
     } catch (_) {
       // Intentionally ignored — see above.
     }

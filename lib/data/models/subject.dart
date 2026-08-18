@@ -35,6 +35,9 @@ IconData iconForKey(String? key) => switch (key) {
       'chart' => Icons.show_chart_rounded,
       'document' => Icons.description_outlined,
       'calculate' => Icons.calculate_outlined,
+      'code' => Icons.terminal_rounded,
+      'globe' => Icons.public_rounded,
+      'brain' => Icons.psychology_outlined,
       _ => Icons.menu_book_outlined,
     };
 
@@ -60,3 +63,30 @@ class Subject {
 
   IconData get icon => iconForKey(iconKey);
 }
+
+/// A category offered on the filing screen before the user has any of their
+/// own. Nothing is written until one is picked — these are suggestions, not
+/// seeded rows (the §5.2 pattern: catalogue in the app, data in the database).
+class CategorySuggestion {
+  const CategorySuggestion(this.name, this.accent, this.iconKey);
+
+  final String name;
+  final SubjectAccent accent;
+  final String iconKey;
+
+  IconData get icon => iconForKey(iconKey);
+}
+
+/// Deliberately broad and short. A long list is a menu to read rather than a
+/// choice to make, and anything missing is one tap away in the custom field.
+const categorySuggestions = <CategorySuggestion>[
+  CategorySuggestion('Mathematics', SubjectAccent.indigo, 'calculate'),
+  CategorySuggestion('Physics', SubjectAccent.violet, 'science'),
+  CategorySuggestion('Chemistry', SubjectAccent.emerald, 'science'),
+  CategorySuggestion('Biology', SubjectAccent.coral, 'science'),
+  CategorySuggestion('Computer Science', SubjectAccent.indigo, 'code'),
+  CategorySuggestion('Economics', SubjectAccent.amber, 'chart'),
+  CategorySuggestion('History', SubjectAccent.coral, 'globe'),
+  CategorySuggestion('Psychology', SubjectAccent.violet, 'brain'),
+  CategorySuggestion('Literature', SubjectAccent.emerald, 'book'),
+];

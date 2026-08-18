@@ -6,6 +6,7 @@ import '../../data/models/achievement.dart';
 import '../../data/models/profile.dart';
 import '../../data/models/study_material.dart';
 import '../../data/supabase_providers.dart';
+import '../materials/materials_view_model.dart';
 import '../planner/planner_view_model.dart';
 
 final profileProvider = FutureProvider<Profile?>(
@@ -35,19 +36,38 @@ final achievementsProvider = FutureProvider<List<Achievement>>((ref) async {
 /// The "pick up where you left off" document, or null when there is nothing to
 /// resume. Home hides the whole section on null — an empty resume card is a
 /// promise the app cannot keep.
-final resumeMaterialProvider = FutureProvider<StudyMaterial?>(
-  (ref) => ref.watch(libraryRepositoryProvider).resumeMaterial(),
-);
+///
+/// **Derived from [materialsProvider], not queried separately.** It used to
+/// call `resumeMaterial()` on the repository, which meant every writer had to
+/// remember to invalidate this provider too — and one that forgot left Home
+/// describing a document the user had already deleted. Anything that answers a
+/// question about the library belongs downstream of the library.
+final resumeMaterialProvider = FutureProvider<StudyMaterial?>((ref) async {
+  final materials = await ref.watch(materialsProvider.future);
+  final started =
+      materials.where((m) => m.progress > 0 && m.progress < 1).toList();
+  if (started.isEmpty) return null;
+
+  // Most recently touched, which is not the same as most recently added.
+  started.sort((a, b) => switch ((a.updatedAt, b.updatedAt)) {
+        (final x?, final y?) => y.compareTo(x),
+        (null, _?) => 1,
+        (_?, null) => -1,
+        _ => 0,
+      });
+  return started.first;
+});
 
 /// Fills a brand-new account with a walkable starter library, once. The
 /// database function is idempotent, so a second call is a no-op — this
 /// provider exists so the *first* screen after sign-up triggers it.
 final starterContentProvider = FutureProvider<void>((ref) async {
   await ref.watch(profileRepositoryProvider).seedStarterContent();
-  // Anything read before the seed committed is now stale.
+  // Anything read before the seed committed is now stale. Invalidating the
+  // library cascades to everything derived from it.
   ref
     ..invalidate(profileProvider)
-    ..invalidate(resumeMaterialProvider)
+    ..invalidate(materialsProvider)
     ..invalidate(achievementsProvider);
 });
 
@@ -164,10 +184,17 @@ final flowSuggestionProvider = FutureProvider<FlowSuggestion?>((ref) async {
     );
   }
 
-  final material = await ref.watch(libraryRepositoryProvider).leastProgressed();
-  if (material != null) {
+  // From the library list rather than its own query, so deleting the document
+  // this names takes the suggestion with it. That is the exact bug this fixed:
+  // the last material was deleted and Home went on recommending it.
+  final unfinished = (await ref.watch(materialsProvider.future))
+      .where((m) => m.progress < 1)
+      .toList()
+    ..sort((a, b) => a.progress.compareTo(b.progress));
+
+  if (unfinished.isNotEmpty) {
     return FlowSuggestion(
-      text: '**${material.title}** is your least-read material.',
+      text: '**${unfinished.first.title}** is your least-read material.',
       action: 'Open it',
     );
   }

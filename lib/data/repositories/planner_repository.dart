@@ -8,6 +8,14 @@ import '../models/study_block.dart';
 const _blockSelect = '*, subjects(id, name, accent, icon)';
 const _examSelect = '*, subjects(id, name, accent, icon)';
 
+/// One finished study block, reduced to the two things the profile stats need.
+class CompletedBlock {
+  const CompletedBlock({required this.day, required this.minutes});
+
+  final DateTime day;
+  final int minutes;
+}
+
 class PlannerRepository {
   const PlannerRepository(this._client);
 
@@ -39,6 +47,53 @@ class PlannerRepository {
       (grouped[key] ??= []).add(StudyBlock.fromRow(row));
     }
     return grouped;
+  }
+
+  /// Every block the user has ticked off, newest first, as the day it was
+  /// scheduled for and how long it ran.
+  ///
+  /// Lifetime rather than a window: it backs both the streak and the total
+  /// hours studied, and a window would make either quietly wrong. Only the
+  /// three columns needed, because this is the whole history rather than one
+  /// screen's worth.
+  Future<List<CompletedBlock>> completedBlocks() async {
+    final rows = await _client
+        .from('study_blocks')
+        .select('scheduled_on, starts_at, ends_at')
+        .eq('done', true)
+        .order('scheduled_on', ascending: false);
+
+    return [
+      for (final row in rows)
+        () {
+          final date = DateTime.parse(row['scheduled_on'] as String);
+          return CompletedBlock(
+            day: DateTime(date.year, date.month, date.day),
+            minutes: _minutesBetween(
+              row['starts_at'] as String?,
+              row['ends_at'] as String?,
+            ),
+          );
+        }(),
+    ];
+  }
+
+  /// A block with no times contributes to the streak but not to the hours —
+  /// it happened, we just cannot say for how long.
+  static int _minutesBetween(String? from, String? to) {
+    if (from == null || to == null) return 0;
+    final start = _minutes(from);
+    final end = _minutes(to);
+    if (start == null || end == null || end <= start) return 0;
+    return end - start;
+  }
+
+  static int? _minutes(String time) {
+    final parts = time.split(':');
+    if (parts.length < 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    return (h == null || m == null) ? null : h * 60 + m;
   }
 
   Future<List<StudyBlock>> blocksOn(DateTime day) async {
