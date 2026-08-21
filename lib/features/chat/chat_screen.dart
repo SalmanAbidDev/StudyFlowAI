@@ -1,8 +1,8 @@
 // lib/features/chat/chat_screen.dart
 //
-// "Chat with your notes". The transcript and the scripted reply table live in
-// chatProvider; what stays here is the text field, the scroll position, and
-// the composer — controllers, not application state.
+// "Chat with your notes". The transcript lives in chatProvider; what stays
+// here is the text field, the scroll position, and the composer — controllers,
+// not application state.
 
 import 'dart:async';
 
@@ -11,6 +11,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
+import '../../data/models/study_material.dart';
+import '../materials/material_browser.dart';
+import '../materials/materials_view_model.dart';
 import 'chat_models.dart';
 import 'chat_view_model.dart';
 
@@ -35,18 +38,52 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void _send([String? preset]) {
     final text = (preset ?? _input.text).trim();
     if (text.isEmpty) return;
+    // Guarded here rather than by leaving the button's `onTap` null: the
+    // enabled-ness depends on state the composer only learns about on the
+    // *next* frame, and a tap arriving before that frame would be swallowed
+    // with no feedback at all.
+    if (ref.read(chatUsageProvider).value?.exhausted ?? false) return;
+    if (ref.read(chatProvider).value?.typing ?? false) return;
     _input.clear();
     unawaited(ref.read(chatProvider.notifier).send(text));
   }
 
-  void _scrollToEnd() {
+  /// Whether the end has been reached once already. Opening a chat that
+  /// already overflows should *start* at the newest message; only later
+  /// arrivals are worth animating to.
+  bool _pinned = false;
+
+  /// Keeps the newest message in view **without moving anything else**.
+  ///
+  /// The transcript is top-anchored, so a conversation shorter than the
+  /// viewport simply sits under the header and there is nothing to scroll —
+  /// `maxScrollExtent` is 0 and this returns immediately. Only once the
+  /// content outgrows the viewport does the view follow the end.
+  void _pinToEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scroll.hasClients) return;
-      _scroll.animateTo(
-        _scroll.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 280),
-        curve: Curves.easeOut,
-      );
+      if (!mounted || !_scroll.hasClients) return;
+
+      final target = _scroll.position.maxScrollExtent;
+      if (target - _scroll.offset < 1) {
+        _pinned = true;
+        return;
+      }
+
+      if (_pinned) {
+        _scroll.animateTo(
+          target,
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOut,
+        );
+        return;
+      }
+
+      // First sight of an existing transcript. `maxScrollExtent` is only an
+      // *estimate* while children are still being laid out lazily, so jumping
+      // once can land short of the end; repeat until it stops growing. This
+      // terminates because every jump forces more of the list to be measured.
+      _scroll.jumpTo(target);
+      _pinToEnd();
     });
   }
 
@@ -55,11 +92,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final sf = context.sf;
     final scheme = context.scheme;
     final session = ref.watch(chatProvider);
+    final notice = session.value?.notice;
+    final thinking = session.value?.typing ?? false;
+    final usage = ref.watch(chatUsageProvider).value;
+    final spent = usage?.exhausted ?? false;
 
     // Scrolling is a side effect of the transcript changing, not of the user
-    // tapping send — the scripted reply arrives on a timer long after the tap.
-    // Listening to the provider catches both cases in one place.
-    ref.listen(chatProvider, (_, _) => _scrollToEnd());
+    // tapping send — a reply will one day land long after the tap. Listening to
+    // the provider catches both cases in one place.
+    ref.listen(chatProvider, (_, _) => _pinToEnd());
 
     return Scaffold(
       body: SafeArea(
@@ -96,36 +137,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                             color: sf.ink,
                           ),
                         ),
-                        Row(
-                          children: [
-                            Container(
-                              width: 6,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: sf.emerald,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Reading 3 docs',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: sf.emeraldInk,
-                              ),
-                            ),
-                          ],
-                        ),
+                        const _HeldDocumentLine(),
                       ],
                     ),
                   ),
+                  // Which document Flow is reading. An icon rather than a
+                  // label because the answer is already spelled out under the
+                  // name, an inch to the left.
                   SfIconButton(
-                    icon: Icons.refresh_rounded,
+                    icon: Icons.description_outlined,
                     size: 36,
                     iconSize: 16,
-                    onPressed: () =>
-                        unawaited(ref.read(chatProvider.notifier).reset()),
+                    onPressed: () => showSfSheet<void>(
+                      context,
+                      (_) => const _DocumentSheet(),
+                    ),
                   ),
                 ],
               ),
@@ -143,20 +169,73 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   error: error,
                   onRetry: () => ref.invalidate(chatProvider),
                 ),
-                data: (data) => ListView.separated(
+                data: (data) => _Transcript(
+                  session: data,
                   controller: _scroll,
-                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
-                  itemCount: data.messages.length + (data.typing ? 1 : 0),
-                  separatorBuilder: (_, _) => const SizedBox(height: 14),
-                  itemBuilder: (context, i) {
-                    if (i == data.messages.length) {
-                      return const _TypingBubble();
-                    }
-                    return _Bubble(message: data.messages[i]);
-                  },
                 ),
               ),
             ),
+
+            // Why nothing came back. Sits outside the transcript because it is
+            // the app speaking about itself, not a turn in the conversation.
+            if (notice != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline_rounded, size: 13, color: sf.ink3),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        notice,
+                        style: TextStyle(
+                          fontSize: 11,
+                          height: 1.4,
+                          fontWeight: FontWeight.w500,
+                          color: sf.ink3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            // What is left of today. Shown only once some has been used, so a
+            // fresh day is not greeted with a quota.
+            if (usage != null && usage.used > 0)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 2),
+                child: Row(
+                  children: [
+                    Icon(
+                      spent
+                          ? Icons.hourglass_bottom_rounded
+                          : Icons.bolt_rounded,
+                      size: 13,
+                      color: spent ? sf.coralInk : sf.ink3,
+                    ),
+                    const SizedBox(width: 6),
+                    // Flexible: the line grows with the text scale, and a
+                    // bare Row would run off the right edge.
+                    Expanded(
+                      child: Text(
+                        spent
+                            ? 'No questions left today'
+                            : '${usage.remaining} of ${usage.limit} questions '
+                                'left today',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: spent ? sf.coralInk : sf.ink3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
             // Suggested prompts — content-sized so the chips grow with the
             // text instead of overflowing a fixed rail height.
@@ -219,6 +298,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     Expanded(
                       child: TextField(
                         controller: _input,
+                        // Nothing to type into once the day's questions are
+                        // gone; leaving it live would let you write a question
+                        // that could not be sent.
+                        enabled: !spent,
                         onSubmitted: (_) => _send(),
                         textInputAction: TextInputAction.send,
                         style: TextStyle(
@@ -234,15 +317,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           focusedBorder: InputBorder.none,
                           contentPadding: const EdgeInsets.symmetric(
                               vertical: 10),
-                          hintText: 'Ask anything…',
+                          hintText: spent
+                              ? 'No questions left today'
+                              : thinking
+                                  ? 'Flow is reading…'
+                                  : 'Ask anything…',
                           hintStyle: TextStyle(fontSize: 14, color: sf.ink4),
                         ),
                       ),
-                    ),
-                    IconButton(
-                      onPressed: () {},
-                      icon: Icon(Icons.mic_none_rounded,
-                          size: 20, color: sf.ink3),
                     ),
                     // Listening to the controller rather than rebuilding the
                     // whole screen on every keystroke, which is what the old
@@ -250,7 +332,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     ValueListenableBuilder<TextEditingValue>(
                       valueListenable: _input,
                       builder: (context, value, _) {
-                        final hasDraft = value.text.trim().isNotEmpty;
+                        final hasDraft =
+                            value.text.trim().isNotEmpty && !spent && !thinking;
                         return GestureDetector(
                           onTap: _send,
                           child: AnimatedContainer(
@@ -284,6 +367,221 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The messages, **top-anchored**: the conversation starts under the header
+/// and grows downward, and a new message appears *below* the previous one.
+///
+/// This was briefly `reverse: true` — messages pinned to the bottom edge — on
+/// the theory that chat apps anchor there. They do not, for a short thread:
+/// bottom-anchoring makes every message already on screen climb upward each
+/// time you send, which is exactly the "it moves to the top" that reversing
+/// was meant to fix. Growing downward leaves what is on screen where it is;
+/// `_pinToEnd` handles the case where the thread outgrows the viewport.
+class _Transcript extends StatelessWidget {
+  const _Transcript({required this.session, required this.controller});
+
+  final ChatSession session;
+  final ScrollController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    if (session.messages.isEmpty) return const _EmptyTranscript();
+
+    final count = session.messages.length + (session.typing ? 1 : 0);
+    return ListView.separated(
+      controller: controller,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      itemCount: count,
+      separatorBuilder: (_, _) => const SizedBox(height: 14),
+      itemBuilder: (context, i) {
+        // The typing indicator is the newest thing there is — one past the
+        // last message.
+        if (i == session.messages.length) return const _TypingBubble();
+        return _Bubble(message: session.messages[i]);
+      },
+    );
+  }
+}
+
+/// What Flow is actually holding, under its name in the header.
+///
+/// This used to read "Reading 3 docs" — hard-coded, then counted, and wrong
+/// either way: Flow reads *one* document, the one you hand it. Naming it is
+/// the only version that tells you what a question will be answered from.
+class _HeldDocumentLine extends ConsumerWidget {
+  const _HeldDocumentLine();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sf = context.sf;
+    final material = ref.watch(chatMaterialProvider);
+    final held = material != null;
+
+    return Row(
+      children: [
+        Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: held ? sf.emerald : sf.ink4,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            material?.title ?? 'No document selected',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: held ? sf.emeraldInk : sf.ink3,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Picks the one document Flow reads from. Includes an explicit "No document"
+/// row: holding nothing is a state you can choose, not only one you start in.
+class _DocumentSheet extends ConsumerWidget {
+  const _DocumentSheet();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sf = context.sf;
+    final all = ref.watch(materialsProvider).value ?? const <StudyMaterial>[];
+    final heldId = ref.watch(chatDocumentProvider);
+
+    void hold(String? id) {
+      ref.read(chatDocumentProvider.notifier).update(id);
+      Navigator.of(context).pop();
+    }
+
+    return SfSheetShell(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 2, bottom: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Read from',
+                  style: AppTextStyles.heading.copyWith(
+                    fontSize: 20,
+                    letterSpacing: -0.5,
+                    color: sf.ink,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Flow answers from the one document you pick. Each gets its '
+                  'own conversation.',
+                  style: TextStyle(fontSize: 13, height: 1.35, color: sf.ink3),
+                ),
+              ],
+            ),
+          ),
+          _NoDocumentRow(selected: heldId == null, onTap: () => hold(null)),
+          if (all.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 14, left: 2),
+              child: Text(
+                'Nothing in your library yet.',
+                style: TextStyle(fontSize: 13, color: sf.ink3),
+              ),
+            ),
+          // A Column, not a ListView: the sheet already scrolls, and nesting a
+          // second scrollable inside it fights the first.
+          for (final material in all) ...[
+            const SizedBox(height: 8),
+            MaterialRow(
+              material: material,
+              showProgress: false,
+              selected: material.id == heldId,
+              onTap: () => hold(material.id),
+              trailing: material.id == heldId
+                  ? Icon(Icons.check_circle_rounded,
+                      size: 20, color: context.scheme.primary)
+                  : const SizedBox.shrink(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NoDocumentRow extends StatelessWidget {
+  const _NoDocumentRow({required this.selected, required this.onTap});
+
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final sf = context.sf;
+    final scheme = context.scheme;
+
+    return SfCard(
+      padding: const EdgeInsets.all(14),
+      onTap: onTap,
+      color: selected ? sf.indigoSoft : null,
+      borderColor: selected ? scheme.primary : null,
+      child: Row(
+        children: [
+          SoftIconTile(
+            icon: Icons.block_rounded,
+            color: sf.ink3,
+            background: scheme.surfaceContainerHigh,
+            width: 44,
+            height: 44,
+            radius: 10,
+            iconSize: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'No document',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.1,
+                color: sf.ink,
+              ),
+            ),
+          ),
+          if (selected)
+            Icon(Icons.check_circle_rounded, size: 20, color: scheme.primary),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyTranscript extends ConsumerWidget {
+  const _EmptyTranscript();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hasDocs = (ref.watch(chatCorpusSizeProvider) ?? 0) > 0;
+    return SfEmptyView(
+      icon: Icons.chat_bubble_outline_rounded,
+      title: 'Ask Flow anything',
+      body: hasDocs
+          ? 'Questions about your materials go here.'
+          : 'Upload something to your library first — Flow answers from what '
+              'you have read, not from thin air.',
     );
   }
 }

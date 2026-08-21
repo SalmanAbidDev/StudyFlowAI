@@ -17,10 +17,11 @@ import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/study_material.dart';
 import '../chat/chat_screen.dart';
+import '../chat/chat_view_model.dart';
 import '../flashcards/flashcards_screen.dart';
 import '../quiz/quiz_screen.dart';
 import '../summaries/summaries_screen.dart';
-import '../summaries/summaries_view_model.dart';
+import '../materials/materials_view_model.dart';
 import 'document_view_model.dart';
 
 class DocumentScreen extends ConsumerWidget {
@@ -29,8 +30,7 @@ class DocumentScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
-    final material = ref.watch(summaryMaterialProvider).value;
-    final bookmarked = ref.watch(summaryBookmarkedProvider);
+    final material = ref.watch(currentMaterialProvider).value;
 
     return Scaffold(
       body: SafeArea(
@@ -71,39 +71,25 @@ class DocumentScreen extends ConsumerWidget {
                       ],
                     ),
                   ),
+                  // Exactly the button the bookmark was, with the summarize
+                  // glyph in its place. Tinted brand rather than ink, because
+                  // it is the one control here that invokes Flow.
                   SfIconButton(
-                    icon: bookmarked
-                        ? Icons.bookmark_rounded
-                        : Icons.bookmark_border_rounded,
+                    icon: Icons.auto_awesome_rounded,
                     iconSize: 16,
-                    onPressed:
-                        ref.read(summaryBookmarkedProvider.notifier).toggle,
+                    color: context.scheme.primary,
+                    onPressed: () => Navigator.of(context).push(
+                      sfRoute(builder: (_) => const SummariesScreen()),
+                    ),
                   ),
                 ],
               ),
             ),
 
             Expanded(
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(22, 0, 22, 0),
-                      child: _DocumentBody(material: material),
-                    ),
-                  ),
-                  // Floats over the document rather than taking a row of its
-                  // own — the viewer wants every pixel of height it can get.
-                  Positioned(
-                    right: 22,
-                    bottom: 16,
-                    child: _SummarizeButton(
-                      onTap: () => Navigator.of(context).push(
-                        sfRoute(builder: (_) => const SummariesScreen()),
-                      ),
-                    ),
-                  ),
-                ],
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(22, 0, 22, 0),
+                child: _DocumentBody(material: material),
               ),
             ),
 
@@ -138,74 +124,24 @@ class DocumentScreen extends ConsumerWidget {
                   // Painted rather than a glyph, so it goes in `leading`.
                   SfButton.iconOnly(
                     leading: const FlowOrb(size: 18),
-                    onPressed: () => Navigator.of(context).push(
-                      sfRoute(builder: (_) => const ChatScreen()),
-                    ),
+                    // Hands Flow the document you are reading. Opening the
+                    // chat from here and being told "No document selected"
+                    // asked you to go and find the thing already on screen.
+                    onPressed: material == null
+                        ? null
+                        : () {
+                            ref
+                                .read(chatDocumentProvider.notifier)
+                                .update(material.id);
+                            Navigator.of(context).push(
+                              sfRoute(builder: (_) => const ChatScreen()),
+                            );
+                          },
                   ),
                 ],
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The pill that opens the summary. Not a Material `FloatingActionButton`:
-/// that brings its own shape, elevation and typography, and this app builds
-/// its modals and buttons from the design tokens (§6.1).
-class _SummarizeButton extends StatelessWidget {
-  const _SummarizeButton({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final sf = context.sf;
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: AppRadius.brPill,
-        gradient: LinearGradient(colors: [sf.brand, sf.brandMid]),
-        boxShadow: AppShadows.resolve(
-          [
-            BoxShadow(
-              color: sf.brand.withValues(alpha: 0.45),
-              blurRadius: 18,
-              spreadRadius: -4,
-              offset: const Offset(0, 8),
-            ),
-          ],
-          Theme.of(context).brightness,
-        ),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: AppRadius.brPill,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: AppRadius.brPill,
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 18, vertical: 13),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.auto_awesome_rounded, size: 16, color: Colors.white),
-                SizedBox(width: 8),
-                Text(
-                  'Summarize',
-                  style: TextStyle(
-                    fontFamily: AppTextStyles.fontUi,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.1,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
       ),
     );

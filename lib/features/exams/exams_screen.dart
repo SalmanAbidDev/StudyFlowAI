@@ -9,9 +9,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
+import '../../core/navigation.dart';
 import '../../data/models/exam.dart';
 import '../../data/models/subject.dart';
-import '../planner/planner_view_model.dart';
+import 'exam_detail_screen.dart';
+import 'exam_editor_screen.dart';
+import 'exams_view_model.dart';
 
 class ExamsScreen extends ConsumerWidget {
   const ExamsScreen({super.key});
@@ -19,10 +22,17 @@ class ExamsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
-    final examsAsync = ref.watch(upcomingExamsProvider);
-    final exams = examsAsync.value ?? const <Exam>[];
+    final examsAsync = ref.watch(examPrepsProvider);
+    final exams = examsAsync.value ?? const <ExamPrep>[];
     final featured = exams.isEmpty ? null : exams.first;
     final rest = exams.skip(1).toList();
+
+    void open(ExamPrep prep) {
+      ref.read(selectedExamProvider.notifier).update(prep.exam.id);
+      Navigator.of(context).push(
+        sfRoute(builder: (_) => const ExamDetailScreen()),
+      );
+    }
 
     return Scaffold(
       body: SafeArea(
@@ -53,8 +63,8 @@ class ExamsScreen extends ConsumerWidget {
                     Text(
                       featured == null
                           ? 'Nothing scheduled'
-                          : '${exams.length} upcoming · next in '
-                              '${featured.daysLeft} days',
+                          : '${exams.length} upcoming · next '
+                              '${featured.exam.countdown}',
                       style: TextStyle(fontSize: 12, color: sf.ink3),
                     ),
                   ],
@@ -63,8 +73,9 @@ class ExamsScreen extends ConsumerWidget {
               SfIconButton(
                 icon: Icons.add_rounded,
                 size: 40,
-                onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Exam editor is not built yet')),
+                filled: true,
+                onPressed: () => Navigator.of(context).push(
+                  sfModalRoute(builder: (_) => const ExamEditorScreen()),
                 ),
               ),
             ],
@@ -73,7 +84,10 @@ class ExamsScreen extends ConsumerWidget {
         if (featured != null) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(22, 12, 22, 14),
-            child: _FeaturedExam(exam: featured),
+            child: GestureDetector(
+              onTap: () => open(featured),
+              child: _FeaturedExam(prep: featured),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(22, 0, 22, 10),
@@ -88,20 +102,27 @@ class ExamsScreen extends ConsumerWidget {
             loading: () => const SfLoadingList(rows: 3, height: 72),
             error: (error, _) => SfErrorView(
               error: error,
-              onRetry: () => ref.invalidate(upcomingExamsProvider),
+              onRetry: () => ref.invalidate(examPrepsProvider),
             ),
             data: (_) => exams.isEmpty
+                // No action button: adding is the ＋ in the header, and one
+                // control per job beats the same job offered twice on the same
+                // screen — the same rule the Materials empty state follows.
                 ? const SfEmptyView(
                     icon: Icons.event_available_outlined,
                     title: 'No exams scheduled',
-                    body: 'Add an exam date and Flow will plan around it.',
+                    body: 'Tap ＋ to add an exam date, and Flow will plan '
+                        'around it.',
                   )
                 : ListView.separated(
                     // No nav pill to clear any more — this is a pushed route.
                     padding: const EdgeInsets.fromLTRB(22, 0, 22, 24),
                     itemCount: rest.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 8),
-                    itemBuilder: (context, i) => _ExamRow(exam: rest[i]),
+                    itemBuilder: (context, i) => _ExamRow(
+                      prep: rest[i],
+                      onTap: () => open(rest[i]),
+                    ),
                   ),
           ),
         ),
@@ -113,13 +134,14 @@ class ExamsScreen extends ConsumerWidget {
 }
 
 class _FeaturedExam extends StatelessWidget {
-  const _FeaturedExam({required this.exam});
+  const _FeaturedExam({required this.prep});
 
-  final Exam exam;
+  final ExamPrep prep;
 
   @override
   Widget build(BuildContext context) {
     final sf = context.sf;
+    final exam = prep.exam;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
@@ -158,14 +180,23 @@ class _FeaturedExam extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Said 'High priority' on whatever exam happened to be
+                // next. Now it says it only when the exam is one.
                 Row(
                   children: [
-                    const Icon(Icons.my_location_rounded,
-                        size: 14, color: Colors.white),
+                    Icon(
+                      exam.priority == ExamPriority.high
+                          ? Icons.my_location_rounded
+                          : Icons.event_outlined,
+                      size: 14,
+                      color: Colors.white,
+                    ),
                     const SizedBox(width: 6),
                     Flexible(
                       child: SfEyebrow(
-                        'High priority',
+                        exam.priority == ExamPriority.high
+                            ? 'High priority'
+                            : 'Next up',
                         size: 10,
                         tracking: 1,
                         color: Colors.white.withValues(alpha: 0.9),
@@ -191,8 +222,11 @@ class _FeaturedExam extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 4),
+                          // Was that literal string for every exam.
+                          // Built from the row now, and it drops the
+                          // time when none was entered.
                           SfMono(
-                            'THU · MAY 15 · 9:00 AM',
+                            exam.schedule,
                             size: 12,
                             color: Colors.white.withValues(alpha: 0.85),
                           ),
@@ -240,7 +274,7 @@ class _FeaturedExam extends StatelessWidget {
                       ),
                     ),
                     SfMono(
-                      '${(exam.preparation * 100).round()}%',
+                      prep.preparationLabel,
                       size: 11,
                       weight: FontWeight.w700,
                       color: Colors.white,
@@ -249,10 +283,21 @@ class _FeaturedExam extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 SfProgress(
-                  value: exam.preparation,
+                  value: prep.preparation ?? 0,
                   color: Colors.white,
                   track: Colors.white.withValues(alpha: 0.2),
                 ),
+                if (!prep.hasMaterials) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'No materials added — tap to add them',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white.withValues(alpha: 0.9),
+                    ),
+                  ),
+                ],
               ],
             ),
           ],
@@ -263,18 +308,20 @@ class _FeaturedExam extends StatelessWidget {
 }
 
 class _ExamRow extends StatelessWidget {
-  const _ExamRow({required this.exam});
+  const _ExamRow({required this.prep, required this.onTap});
 
-  final Exam exam;
+  final ExamPrep prep;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final sf = context.sf;
+    final exam = prep.exam;
     final accent = exam.accent.color(context);
 
     return SfCard(
       padding: const EdgeInsets.all(14),
-      onTap: () {},
+      onTap: onTap,
       child: Row(
         children: [
           Container(
@@ -321,31 +368,49 @@ class _ExamRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                SfMono(exam.date, color: sf.ink3),
+                SfMono(
+                  exam.examTime == null
+                      ? exam.date
+                      : '${exam.date} · ${exam.time}',
+                  color: sf.ink3,
+                ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SfProgress(
-                        value: exam.preparation,
-                        color: accent,
-                        height: 4,
-                      ),
+                // Nothing attached says so, instead of a 0% bar that
+                // reads as 'you have done none of it' when the truth is
+                // 'there is nothing to measure'.
+                if (!prep.hasMaterials)
+                  Text(
+                    'No materials added',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: sf.ink4,
                     ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 30,
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: SfMono(
-                          '${(exam.preparation * 100).round()}%',
-                          size: 10,
-                          color: sf.ink3,
+                  )
+                else
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SfProgress(
+                          value: prep.preparation ?? 0,
+                          color: accent,
+                          height: 4,
                         ),
                       ),
-                    ),
-                  ],
-                ),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 34,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: SfMono(
+                            prep.preparationLabel,
+                            size: 10,
+                            color: sf.ink3,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),

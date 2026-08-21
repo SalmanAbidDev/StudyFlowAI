@@ -1,7 +1,10 @@
 // lib/features/chat/chat_models.dart
 //
-// The Model half of the chat feature: what a message is, and the scripted
-// content the view model serves.
+// The Model half of the chat feature: what a message is.
+//
+// There is no scripted content here any more. Every message in a transcript is
+// now something the user actually typed or something a model actually said —
+// nothing is invented to make the screen look busy.
 
 /// Which accent a highlighted phrase is tinted with, resolved at build time.
 enum SfAccent { brand, coral, emerald }
@@ -27,81 +30,56 @@ class ChatMessage {
 }
 
 class ChatSession {
-  const ChatSession({required this.messages, this.typing = false});
+  const ChatSession({
+    required this.messages,
+    this.typing = false,
+    this.notice,
+  });
 
   final List<ChatMessage> messages;
   final bool typing;
 
-  ChatSession copyWith({List<ChatMessage>? messages, bool? typing}) =>
+  /// A line from the *app* rather than from Flow — currently only "no model
+  /// yet". Deliberately not a [ChatMessage]: it is never persisted, so it
+  /// cannot end up in the history a real model is later handed as context.
+  final String? notice;
+
+  ChatSession copyWith({
+    List<ChatMessage>? messages,
+    bool? typing,
+    String? notice,
+    bool clearNotice = false,
+  }) =>
       ChatSession(
         messages: messages ?? this.messages,
         typing: typing ?? this.typing,
+        // Clearable: the last failure must not outlive the next question.
+        notice: clearNotice ? null : (notice ?? this.notice),
       );
 }
 
-/// The transcript the screen opens on.
-const openingTranscript = <ChatMessage>[
-  ChatMessage.fromFlow(
-    "Hi Alex — I've read your Stereochemistry chapter. Ask me anything "
-    'about it.',
-    sources: ['Stereochem.pdf · p.1'],
-  ),
-  ChatMessage.fromUser(
-    "What's the difference between enantiomers and diastereomers?",
-  ),
-  ChatMessage.fromFlow(
-    'Enantiomers are non-superimposable mirror images — they share all '
-    'properties except how they rotate plane-polarized light. Diastereomers '
-    "are stereoisomers that aren't mirror images, so they have distinct "
-    'physical properties (melting point, solubility, etc.).',
-    sources: ['Stereochem.pdf · p.4', 'Stereochem.pdf · p.7'],
-    highlightSpecs: [
-      (phrase: 'non-superimposable mirror images', accent: SfAccent.brand),
-      (phrase: "aren't mirror images", accent: SfAccent.coral),
-    ],
-  ),
-];
+/// Shown when the day's questions are gone. Not a message from Flow: it is
+/// the app's own rule, and putting it in the transcript would leave it there
+/// tomorrow when it is no longer true.
+const kDailyLimitNotice =
+    'That is all of your questions for today. Flow is back tomorrow.';
 
-/// Scripted answers. Matched on a lowercase substring of the prompt; the last
-/// entry is the fallback. No model is called — see the note in main.dart.
-const chatScript = <({String match, String reply, List<String> sources})>[
-  (
-    match: 'quiz',
-    reply: "Sure — I'll pull 10 questions from chapter 4, weighted toward R/S "
-        'assignment since that is where you lost marks last time.',
-    sources: ['Stereochem.pdf · p.4-9'],
-  ),
-  (
-    match: 'summar',
-    reply: 'Chapter 4 in one line: chirality comes from a carbon with four '
-        'different groups; R/S encodes its arrangement; enantiomers differ '
-        'only in optical rotation, diastereomers differ in everything else.',
-    sources: ['Stereochem.pdf · p.1-14'],
-  ),
-  (
-    match: 'flashcard',
-    reply: 'Made you 12 cards from this chapter. The four you failed last week '
-        'are queued first.',
-    sources: ['Stereochem.pdf · p.4'],
-  ),
-  (
-    match: '5',
-    reply: 'Your left hand and right hand are mirror images, but you cannot lay '
-        'one exactly on the other. Molecules can be like that too — those '
-        'are enantiomers.',
-    sources: ['Stereochem.pdf · p.2'],
-  ),
-  (
-    match: '',
-    reply: 'A racemic mixture is a 50:50 mix of two enantiomers — optically '
-        'inactive because their rotations cancel.',
-    sources: ['Stereochem.pdf · p.6'],
-  ),
-];
+/// Shown when nothing is held. Flow can still answer general questions, but it
+/// cannot answer *about* a document it has not been given.
+const kNoDocumentNotice =
+    'No document selected — pick one from the header and Flow will answer '
+    'from it.';
 
+/// Openers offered above the composer.
+///
+/// Every one is a *question about the held document* and document-agnostic
+/// with it: a chip naming a chapter would be a promise about content the app
+/// has not read, and a chip like "Make flashcards" would promise an action
+/// nothing performs. The rail scrolls, so the list can grow.
 const chatPrompts = [
-  'Quiz me on this',
-  'Summarize ch.4',
-  'Make flashcards',
+  'Summarize it',
   "Explain like I'm 5",
+  'Key takeaways',
+  'Give me an example',
+  'What might I be asked?',
 ];

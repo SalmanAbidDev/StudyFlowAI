@@ -23,7 +23,7 @@ class LibraryRepository {
   final SupabaseClient _client;
 
   Future<List<Subject>> subjects() async {
-    final rows = await _client.from('subjects').select().order('name');
+    final rows = await _client.from('subjects').select().order('name', ascending: true);
     return rows.map(Subject.fromRow).toList();
   }
 
@@ -57,7 +57,7 @@ class LibraryRepository {
         .from('summary_sections')
         .select()
         .eq('material_id', materialId)
-        .order('position');
+        .order('position', ascending: true);
     return rows.map(SummarySection.fromRow).toList();
   }
 

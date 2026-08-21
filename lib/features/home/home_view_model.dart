@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/achievement.dart';
 import '../../data/models/profile.dart';
+import '../../data/models/study_block.dart';
 import '../../data/models/study_material.dart';
 import '../../data/supabase_providers.dart';
 import '../materials/materials_view_model.dart';
@@ -81,7 +82,9 @@ DateTime currentMonday() {
 }
 
 enum DayState {
-  /// At least one scheduled block was completed.
+  /// Everything scheduled that day was completed. Not "at least one" — that
+  /// coloured a day green with three tasks outstanding, and disagreed with the
+  /// streak, which now requires the whole day (§5.6.4).
   done,
 
   /// Today, with nothing completed yet.
@@ -93,6 +96,10 @@ enum DayState {
   /// Later this week — not yet judgeable.
   upcoming,
 }
+
+/// A day counts as done when it had blocks and none is outstanding.
+bool _allDone(List<StudyBlock>? blocks) =>
+    blocks != null && blocks.isNotEmpty && blocks.every((b) => b.done);
 
 /// Seven entries, Monday first. Replaces a hard-coded "first five ticked" row
 /// that claimed a streak nobody had earned.
@@ -109,8 +116,7 @@ final weekActivityProvider = FutureProvider<List<DayState>>((ref) async {
     for (var i = 0; i < 7; i++)
       switch (monday.add(Duration(days: i))) {
         final day when day.isAfter(today) => DayState.upcoming,
-        final day when (byDay[day] ?? const []).any((b) => b.done) =>
-          DayState.done,
+        final day when _allDone(byDay[day]) => DayState.done,
         final day when day == today => DayState.today,
         _ => DayState.idle,
       },
@@ -155,19 +161,36 @@ final todaySummaryProvider = Provider<TodaySummary>((ref) {
 
 // ─── Flow suggestion ──────────────────────────────────────────────────────
 
+/// Where acting on a suggestion should take you.
+enum FlowTarget { document, quiz, chat }
+
 class FlowSuggestion {
-  const FlowSuggestion({required this.text, required this.action});
+  const FlowSuggestion({
+    required this.text,
+    required this.action,
+    this.target = FlowTarget.chat,
+    this.materialId,
+  });
 
   final String text;
 
   /// The button label. Null hides the button, for the nothing-to-suggest case.
   final String? action;
+
+  /// The screen the button opens. The card used to open the chat whatever it
+  /// had just suggested, so "Retry your last quiz" led to a conversation
+  /// about the quiz rather than to the quiz.
+  final FlowTarget target;
+
+  /// The document the suggestion is about. Handed to whichever screen opens,
+  /// so it lands on the right material instead of the newest one.
+  final String? materialId;
 }
 
 /// What Home's "Flow suggests" card says.
 ///
 /// This is a **rule, not a model** — there is no AI wired up (see §9 of
-/// CluadeWork.md). It reasons from real rows in priority order: a weak quiz
+/// ClaudeWork.md). It reasons from real rows in priority order: a weak quiz
 /// result first, then the least-progressed document, then nothing. Saying
 /// nothing is a valid outcome; inventing a suggestion would be a lie dressed
 /// as intelligence.
@@ -180,7 +203,9 @@ final flowSuggestionProvider = FutureProvider<FlowSuggestion?>((ref) async {
       text: topic == null
           ? 'Retry your last quiz — you scored $scored.'
           : 'Review **$topic** — you scored $scored last time.',
-      action: 'Start review',
+      action: 'Retry the quiz',
+      target: FlowTarget.quiz,
+      materialId: attempt.materialId,
     );
   }
 
@@ -196,6 +221,8 @@ final flowSuggestionProvider = FutureProvider<FlowSuggestion?>((ref) async {
     return FlowSuggestion(
       text: '**${unfinished.first.title}** is your least-read material.',
       action: 'Open it',
+      target: FlowTarget.document,
+      materialId: unfinished.first.id,
     );
   }
 

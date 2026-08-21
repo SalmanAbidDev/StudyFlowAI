@@ -11,6 +11,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/flashcard.dart';
+import '../materials/generate_button.dart';
+import '../materials/generate_view_model.dart';
+import '../materials/generated_empty_view.dart';
 import 'flashcards_view_model.dart';
 
 class FlashcardsScreen extends ConsumerStatefulWidget {
@@ -42,6 +45,11 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
 
   bool get _showingBack => flip.value > 0.5;
 
+  /// True while the last card's review is being written. Finishing the deck
+  /// syncs progress and can tick off today's task, which is a round trip —
+  /// without this the Done button looks stuck.
+  var _finishing = false;
+
   @override
   void dispose() {
     flip.dispose();
@@ -54,6 +62,36 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
     } else {
       flip.forward();
     }
+  }
+
+  /// "Again" and "Got it" both record the review; only the direction differs.
+  /// The card is read from the *live* deck rather than captured, because the
+  /// index can have moved by the time the button is pressed.
+  Future<void> _review(Deck deck, {required bool remembered}) async {
+    if (_finishing) return;
+    final index =
+        ref.read(flashcardIndexProvider).clamp(0, deck.cards.length - 1);
+    final card = deck.cards[index];
+    final last = index == deck.cards.length - 1;
+
+    // The last card has nowhere to advance to, so it stays put and the deck
+    // closes instead. It is still recorded: it is the card that takes the
+    // material to 100%, which is what ticks off today's task.
+    if (!last) {
+      _step(1, deck.cards.length);
+    } else {
+      setState(() => _finishing = true);
+    }
+
+    await ref.read(reviewCardProvider)(card, remembered: remembered);
+
+    if (!last || !mounted) return;
+    Navigator.of(context).maybePop();
+  }
+
+  void _restart() {
+    flip.value = 0;
+    ref.read(flashcardIndexProvider.notifier).update(0);
   }
 
   void _step(int delta, int deckSize) {
@@ -84,15 +122,22 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
               // second dismiss control in the middle of the page was the
               // "back button floating in the body" this screen used to have.
               ? const _Framed(
-                  child: SfEmptyView(
+                  footer: GenerateBar(target: GenerateTarget.flashcards),
+                  child: GeneratedEmptyView(
                     icon: Icons.style_outlined,
-                    title: 'No cards yet',
-                    body:
-                        'Upload a document and Flow will build a deck from it.',
+                    noun: 'cards',
                   ),
                 )
-              : _DeckBody(deck: data, flip: flip, onFlip: _toggleFace,
-                  onStep: (delta) => _step(delta, data.cards.length)),
+              : _DeckBody(
+                  deck: data,
+                  flip: flip,
+                  onFlip: _toggleFace,
+                  onStep: (delta) => _step(delta, data.cards.length),
+                  onReview: ({required bool remembered}) =>
+                      _review(data, remembered: remembered),
+                  onRestart: _restart,
+                  finishing: _finishing,
+                ),
         ),
       ),
     );
@@ -103,9 +148,12 @@ class _FlashcardsScreenState extends ConsumerState<FlashcardsScreen>
 /// otherwise there is nothing to close them with. The populated branch draws
 /// its own header, because it carries the deck title and card counter.
 class _Framed extends StatelessWidget {
-  const _Framed({required this.child});
+  const _Framed({required this.child, this.footer});
 
   final Widget child;
+
+  /// Pinned under the empty state — the way *out* of having nothing.
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -113,6 +161,7 @@ class _Framed extends StatelessWidget {
       children: [
         const SfModalHeader(title: 'Flashcards'),
         Expanded(child: child),
+        ?footer,
       ],
     );
   }
@@ -124,12 +173,25 @@ class _DeckBody extends ConsumerWidget {
     required this.flip,
     required this.onFlip,
     required this.onStep,
+    required this.onReview,
+    required this.onRestart,
+    required this.finishing,
   });
 
   final Deck deck;
   final AnimationController flip;
   final VoidCallback onFlip;
   final void Function(int delta) onStep;
+
+  /// Writes the review down, then steps. Separate from [onStep] because the
+  /// arrows and the refresh button move without judging the card.
+  final void Function({required bool remembered}) onReview;
+
+  /// Back to the first card, from wherever you are.
+  final VoidCallback onRestart;
+
+  /// The last card's review is in flight and the deck is about to close.
+  final bool finishing;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -169,11 +231,10 @@ class _DeckBody extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  SfIconButton(
-                    icon: Icons.settings_outlined,
-                    iconSize: 16,
-                    onPressed: () {},
-                  ),
+                  // The slot stays, empty, so the counter above stays
+                  // optically centred. There was a settings button here with
+                  // an empty onPressed — a control that did nothing at all.
+                  const SizedBox(width: 38),
                 ],
               ),
             ),
@@ -271,32 +332,43 @@ class _DeckBody extends ConsumerWidget {
               child: Row(
                 children: [
                   _RoundAction(
-                    icon: Icons.refresh_rounded,
-                    // Writing the controller's value notifies the
-                    // AnimatedBuilder around the card by itself.
-                    onTap: () => flip.value = 0,
+                    icon: Icons.restart_alt_rounded,
+                    // Back to card one, wherever you are. It used to only
+                    // un-flip the card you were already on, which is what the
+                    // tap on the card itself does.
+                    onTap: onRestart,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: _WideAction(
-                      label: 'Again',
-                      icon: Icons.refresh_rounded,
-                      background: sf.coralSoft,
-                      foreground: sf.coralInk,
-                      onTap: () => onStep(-1),
+                      label: 'Previous',
+                      icon: Icons.arrow_back_rounded,
+                      background: context.scheme.surfaceContainerHigh,
+                      foreground: sf.ink2,
+                      // Navigation only. Going back is not a judgement about
+                      // the card, so nothing is recorded.
+                      onTap: index == 0 ? null : () => onStep(-1),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: _WideAction(
-                      label: 'Got it',
-                      icon: Icons.check_rounded,
+                      // The last card has nothing to be next to.
+                      label: index == cards.length - 1 ? 'Done' : 'Next',
+                      icon: index == cards.length - 1
+                          ? Icons.check_rounded
+                          : Icons.arrow_forward_rounded,
+                      trailingIcon: true,
+                      busy: finishing,
                       background: sf.emerald,
                       foreground: context.isDark
                           ? AppColors.textPrimary
                           : Colors.white,
                       glow: true,
-                      onTap: () => onStep(1),
+                      // Moving on is what marks a card seen — it is the only
+                      // thing left that records anything, and the progress
+                      // bar and the day's task both depend on it.
+                      onTap: finishing ? null : () => onReview(remembered: true),
                     ),
                   ),
                 ],
@@ -376,8 +448,22 @@ class _CardFront extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Mastery: 60%',
-                  style: TextStyle(fontSize: 11, color: sf.ink3)),
+              // Was "Mastery: 60%" on every card ever shown. The rating is
+              // the model's, made when the card was written — see
+              // `Flashcard.difficulty`.
+              // Flexible: "Difficulty: Fairly easy" is a good deal longer
+              // than the "Mastery: 60%" that used to sit here, and at text
+              // scale 1.3 a bare Row ran 53px off the card.
+              Flexible(
+                child: Text(
+                  card.difficultyLabel == null
+                      ? 'Not rated'
+                      : 'Difficulty: ${card.difficultyLabel}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: sf.ink3),
+                ),
+              ),
               Row(
                 children: [
                   for (var i = 0; i < 5; i++)
@@ -387,8 +473,8 @@ class _CardFront extends StatelessWidget {
                       height: 6,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: i < 3
-                            ? sf.emerald
+                        color: i < (card.difficulty ?? 0)
+                            ? _difficultyColor(context, card.difficulty!)
                             : scheme.surfaceContainerHigh,
                       ),
                     ),
@@ -507,6 +593,36 @@ class _RoundAction extends StatelessWidget {
   }
 }
 
+/// Green for an easy card through coral for a hard one. Five dots, filled to
+/// the rating.
+Color _difficultyColor(BuildContext context, int difficulty) {
+  final sf = context.sf;
+  return switch (difficulty) {
+    1 || 2 => sf.emerald,
+    3 => context.scheme.primary,
+    _ => sf.coral,
+  };
+}
+
+/// The icon, or a spinner the same size so the button does not change width.
+class _Glyph extends StatelessWidget {
+  const _Glyph({required this.icon, required this.colour, required this.busy});
+
+  final IconData icon;
+  final Color colour;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!busy) return Icon(icon, size: 16, color: colour);
+    return SizedBox(
+      width: 16,
+      height: 16,
+      child: CircularProgressIndicator(strokeWidth: 2, color: colour),
+    );
+  }
+}
+
 class _WideAction extends StatelessWidget {
   const _WideAction({
     required this.label,
@@ -515,20 +631,36 @@ class _WideAction extends StatelessWidget {
     required this.foreground,
     required this.onTap,
     this.glow = false,
+    this.trailingIcon = false,
+    this.busy = false,
   });
 
   final String label;
   final IconData icon;
   final Color background;
   final Color foreground;
-  final VoidCallback onTap;
+
+  /// Null disables it — "Previous" on the first card has nowhere to go, and a
+  /// button that responds by doing nothing is worse than one that looks spent.
+  final VoidCallback? onTap;
   final bool glow;
+
+  /// Icon after the label rather than before, so "Next →" reads in the
+  /// direction it moves.
+  final bool trailingIcon;
+
+  /// Swaps the icon for a spinner. The work is a round trip, and a button that
+  /// looks idle while it runs reads as broken.
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
+    final enabled = onTap != null;
     return GestureDetector(
       onTap: onTap,
-      child: Container(
+      child: Opacity(
+        opacity: enabled ? 1 : 0.45,
+        child: Container(
         height: 54,
         alignment: Alignment.center,
         decoration: BoxDecoration(
@@ -551,19 +683,30 @@ class _WideAction extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 16, color: foreground),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontFamily: AppTextStyles.fontUi,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: foreground,
+            if (!trailingIcon) ...[
+              _Glyph(icon: icon, colour: foreground, busy: busy),
+              const SizedBox(width: 8),
+            ],
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: AppTextStyles.fontUi,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: foreground,
+                ),
               ),
             ),
+            if (trailingIcon) ...[
+              const SizedBox(width: 8),
+              _Glyph(icon: icon, colour: foreground, busy: busy),
+            ],
           ],
         ),
+      ),
       ),
     );
   }

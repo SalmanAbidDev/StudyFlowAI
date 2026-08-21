@@ -303,6 +303,89 @@ class SfChip extends StatelessWidget {
 
 // ─── Card ─────────────────────────────────────────────────────────────────
 
+/// A chip you pick, as opposed to [SfChip], which is a label you read.
+///
+/// Extracted from the category screen when the exam editor needed the same
+/// thing for subjects. The two-line label is not a detail: a chip wide enough
+/// for "Computer Science" at text scale 1.3 is wider than the screen, and
+/// truncating to "Computer Scien…" would leave someone choosing between
+/// options they cannot fully read.
+class SfSelectChip extends StatelessWidget {
+  const SfSelectChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.icon,
+    this.accent,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final IconData? icon;
+
+  /// Defaults to the brand colour.
+  final Color? accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final sf = context.sf;
+    final scheme = context.scheme;
+    final color = accent ?? scheme.primary;
+
+    return Material(
+      color: Colors.transparent,
+      borderRadius: AppRadius.brPill,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: AppRadius.brPill,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? color.withValues(alpha: 0.12) : scheme.surface,
+            borderRadius: AppRadius.brPill,
+            // Two pixels of accent rather than a fill: the chip has to stay
+            // readable in both themes, and a solid accent behind ink does not.
+            border: Border.all(
+              color: selected ? color : scheme.outline,
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 16, color: selected ? color : sf.ink3),
+                const SizedBox(width: 8),
+              ],
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: AppTextStyles.fontUi,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.1,
+                    color: selected ? color : sf.ink,
+                  ),
+                ),
+              ),
+              if (selected) ...[
+                const SizedBox(width: 6),
+                Icon(Icons.check_rounded, size: 14, color: color),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class SfCard extends StatelessWidget {
   const SfCard({
     super.key,
@@ -417,12 +500,17 @@ class SfIconButton extends StatelessWidget {
     this.iconSize = 18,
     this.filled = false,
     this.badge = false,
+    this.color,
   });
 
   final IconData icon;
   final VoidCallback? onPressed;
   final double size;
   final double iconSize;
+
+  /// Tints the glyph. Defaults to ink; pass a colour only where the action is
+  /// distinct enough to earn one, not for decoration.
+  final Color? color;
 
   /// Solid brand fill instead of the bordered surface treatment.
   final bool filled;
@@ -460,7 +548,7 @@ class SfIconButton extends StatelessWidget {
                       ? (context.isDark
                           ? AppColors.textPrimary
                           : scheme.onPrimary)
-                      : scheme.onSurface,
+                      : (color ?? scheme.onSurface),
                 ),
                 if (badge)
                   Positioned(

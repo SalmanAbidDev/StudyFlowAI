@@ -12,13 +12,23 @@ class StudyRepository {
 
   final SupabaseClient _client;
 
-  /// The first deck with its cards, which is what the Flashcards screen opens
-  /// on. Returns null when the account has no decks yet.
-  Future<Deck?> firstDeck() async {
-    final deck = await _client
-        .from('decks')
-        .select('id, title')
-        .order('created_at')
+  /// The newest deck, whatever it was built from. Only used when a practice
+  /// screen is opened without a document selected.
+  Future<Deck?> firstDeck() => _deck();
+
+  /// The deck built from [materialId], or null when nothing has been generated
+  /// for that document yet — the state the Generate button exists for.
+  Future<Deck?> deckForMaterial(String materialId) => _deck(materialId);
+
+  Future<Deck?> _deck([String? materialId]) async {
+    var query = _client.from('decks').select('id, title');
+    if (materialId != null) query = query.eq('material_id', materialId);
+
+    final deck = await query
+        // Newest deck. Explicit because postgrest-dart's `ascending` defaults
+        // to false — every `.order` in this app states its direction so the
+        // reader never has to know that.
+        .order('created_at', ascending: false)
         .limit(1)
         .maybeSingle();
     if (deck == null) return null;
@@ -27,13 +37,62 @@ class StudyRepository {
         .from('flashcards')
         .select()
         .eq('deck_id', deck['id'] as String)
-        .order('position');
+        .order('position', ascending: true);
 
     return Deck(
       id: deck['id'] as String,
       title: deck['title'] as String,
       cards: cards.map(Flashcard.fromRow).toList(),
     );
+  }
+
+  /// How much of each material's practice has actually been done.
+  ///
+  /// A card counts as done once it has been reviewed — `reviewCard` moves
+  /// `interval_days` off zero, so "reviewed" is a fact in the table rather
+  /// than a flag the app has to remember. A quiz counts once a run has been
+  /// recorded in `quiz_attempts`; there is no per-question row to count, so a
+  /// quiz is all-or-nothing by design rather than by accident.
+  ///
+  /// Three requests, not one per material: this feeds the library list, the
+  /// day's tasks and every exam's preparation, so it has to be cheap.
+  Future<Map<String, ({int done, int total})>> progressByMaterial() async {
+    final decks = await _client
+        .from('decks')
+        .select('material_id, flashcards(interval_days)');
+    final quizzes = await _client
+        .from('quizzes')
+        .select('id, material_id, quiz_questions(id)');
+    final attempts = await _client.from('quiz_attempts').select('quiz_id');
+
+    final attempted = {
+      for (final row in attempts)
+        if (row['quiz_id'] != null) row['quiz_id'] as String,
+    };
+
+    final out = <String, ({int done, int total})>{};
+    void add(String? materialId, int done, int total) {
+      if (materialId == null || total == 0) return;
+      final prior = out[materialId] ?? (done: 0, total: 0);
+      out[materialId] = (done: prior.done + done, total: prior.total + total);
+    }
+
+    for (final deck in decks) {
+      final cards = ((deck['flashcards'] as List?) ?? const [])
+          .cast<Map<String, dynamic>>();
+      final reviewed = cards
+          .where((c) => ((c['interval_days'] as num?) ?? 0) > 0)
+          .length;
+      add(deck['material_id'] as String?, reviewed, cards.length);
+    }
+
+    for (final quiz in quizzes) {
+      final questions = ((quiz['quiz_questions'] as List?) ?? const []).length;
+      final done = attempted.contains(quiz['id'] as String) ? questions : 0;
+      add(quiz['material_id'] as String?, done, questions);
+    }
+
+    return out;
   }
 
   /// SM-2 style: a card you got right moves further out, a card you missed
@@ -56,16 +115,23 @@ class StudyRepository {
     }).eq('id', card.id);
   }
 
-  /// The first quiz with its questions and options, ordered. One request:
-  /// PostgREST nests the embedded rows.
-  Future<Quiz?> firstQuiz() async {
-    final row = await _client
-        .from('quizzes')
-        .select(
+  /// The newest quiz, whatever it was built from.
+  Future<Quiz?> firstQuiz() => _quiz();
+
+  /// The quiz built from [materialId], or null when there is not one yet.
+  Future<Quiz?> quizForMaterial(String materialId) => _quiz(materialId);
+
+  /// Questions and options in one request: PostgREST nests the embedded rows.
+  Future<Quiz?> _quiz([String? materialId]) async {
+    var query = _client.from('quizzes').select(
           'id, title, quiz_questions(id, position, prompt, explanation, '
           'quiz_options(id, position, label, body, is_correct))',
-        )
-        .order('created_at')
+        );
+    if (materialId != null) query = query.eq('material_id', materialId);
+
+    final row = await query
+        // Newest quiz — see the note in `firstDeck`.
+        .order('created_at', ascending: false)
         .limit(1)
         .maybeSingle();
     if (row == null) return null;
@@ -95,7 +161,7 @@ class StudyRepository {
   Future<QuizAttempt?> latestAttempt() async {
     final row = await _client
         .from('quiz_attempts')
-        .select('correct, total, missed')
+        .select('correct, total, missed, quizzes(material_id)')
         .order('completed_at', ascending: false)
         .limit(1)
         .maybeSingle();

@@ -7,6 +7,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'repositories/ai_repository.dart';
 import 'repositories/analytics_repository.dart';
 import 'repositories/chat_repository.dart';
 import 'repositories/library_repository.dart';
@@ -53,6 +54,10 @@ final analyticsRepositoryProvider = Provider<AnalyticsRepository>(
 
 final chatRepositoryProvider = Provider<ChatRepository>(
   (ref) => ChatRepository(ref.watch(supabaseClientProvider)),
+);
+
+final aiRepositoryProvider = Provider<AiRepository>(
+  (ref) => AiRepository(ref.watch(supabaseClientProvider)),
 );
 
 final storageRepositoryProvider = Provider<StorageRepository>(

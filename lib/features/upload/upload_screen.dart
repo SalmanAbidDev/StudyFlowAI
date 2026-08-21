@@ -10,7 +10,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/navigation.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
+import '../../data/models/study_material.dart';
 import '../categories/category_screen.dart';
+import '../documents/document_screen.dart';
+import '../materials/history_screen.dart';
+import '../materials/material_browser.dart';
+import '../materials/materials_view_model.dart';
 import 'paste_text_screen.dart';
 import 'upload_view_model.dart';
 import 'url_preview_screen.dart';
@@ -204,12 +209,62 @@ class UploadScreen extends ConsumerWidget {
                       ),
                     ),
                   ],
+                  const _History(),
                 ],
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The last few uploads, so this screen can answer "did that one go through?"
+/// without a trip to the Materials tab. Absent on an empty library — a
+/// "History" heading over nothing is furniture.
+class _History extends ConsumerWidget {
+  const _History();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final all = ref.watch(materialsProvider).value ?? const <StudyMaterial>[];
+    if (all.isEmpty) return const SizedBox.shrink();
+
+    // `materialsProvider` is already newest-first, so this is the most recent
+    // handful without a second sort.
+    final recent = all.take(3).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 24),
+        SectionHeader(
+          'History',
+          // Always offered, even when all three fit here: the History screen
+          // carries the search box, which is the reason to go there once the
+          // library is bigger than a glance.
+          action: 'View all',
+          onAction: () => Navigator.of(context).push(
+            sfRoute(builder: (_) => const HistoryScreen()),
+          ),
+        ),
+        for (var i = 0; i < recent.length; i++) ...[
+          if (i > 0) const SizedBox(height: 10),
+          MaterialRow(
+            material: recent[i],
+            // The percentage belongs where you go to read; here the question
+            // is only whether the file arrived.
+            showProgress: false,
+            onTap: () {
+              ref.read(selectedMaterialProvider.notifier).update(recent[i].id);
+              Navigator.of(context).push(
+                sfRoute(builder: (_) => const DocumentScreen()),
+              );
+            },
+          ),
+        ],
+      ],
     );
   }
 }

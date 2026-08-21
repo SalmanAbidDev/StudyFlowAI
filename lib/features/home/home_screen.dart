@@ -12,14 +12,17 @@ import '../../core/widgets/widgets.dart';
 import '../../data/models/study_block.dart';
 import '../../data/models/study_material.dart';
 import '../../data/models/subject.dart';
+import '../chat/chat_view_model.dart';
 import '../materials/materials_view_model.dart';
+import '../materials/pick_material_screen.dart';
+import '../quiz/quiz_screen.dart';
+import '../materials/study_progress.dart';
 import '../planner/planner_view_model.dart';
 import '../profile/profile_view_model.dart';
-import '../summaries/summaries_view_model.dart';
 import '../chat/chat_screen.dart';
+import '../exams/exam_detail_screen.dart';
 import '../exams/exams_screen.dart';
-import '../flashcards/flashcards_screen.dart';
-import '../quiz/quiz_screen.dart';
+import '../exams/exams_view_model.dart';
 import '../shell/shell_view_model.dart';
 import '../documents/document_screen.dart';
 import '../upload/upload_screen.dart';
@@ -123,9 +126,30 @@ class HomeScreen extends ConsumerWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: _FlowSuggestionCard(
-                    onStart: () => Navigator.of(context).push(
-                      sfRoute(builder: (_) => const ChatScreen()),
-                    ),
+                    // Goes where the card points. It used to open the chat
+                    // whatever it had just said — "Retry your last quiz" took
+                    // you to a conversation about it instead of to the quiz.
+                    onStart: (suggestion) {
+                      final materialId = suggestion.materialId;
+                      if (materialId != null) {
+                        ref
+                            .read(selectedMaterialProvider.notifier)
+                            .update(materialId);
+                        ref
+                            .read(chatDocumentProvider.notifier)
+                            .update(materialId);
+                      }
+                      Navigator.of(context).push(
+                        switch (suggestion.target) {
+                          FlowTarget.quiz =>
+                            sfModalRoute(builder: (_) => const QuizScreen()),
+                          FlowTarget.document =>
+                            sfRoute(builder: (_) => const DocumentScreen()),
+                          FlowTarget.chat =>
+                            sfRoute(builder: (_) => const ChatScreen()),
+                        },
+                      );
+                    },
                   ),
                 ),
               ],
@@ -352,8 +376,14 @@ class HomeScreen extends ConsumerWidget {
         label: 'Flashcards',
         color: sf.violetInk,
         background: sf.lavenderSoft,
+        // Via the picker, not straight into a deck: from here nothing has
+        // been chosen, and a deck has to be a deck *of* something. Opened
+        // from a document instead, both of these skip the picker entirely.
         onTap: () => Navigator.of(context).push(
-              sfModalRoute(builder: (_) => const FlashcardsScreen()),
+              sfModalRoute(
+                builder: (_) =>
+                    const PickMaterialScreen(tool: StudyTool.flashcards),
+              ),
             ),
       ),
       (
@@ -362,16 +392,21 @@ class HomeScreen extends ConsumerWidget {
         color: sf.coralInk,
         background: sf.coralSoft,
         onTap: () => Navigator.of(context).push(
-              sfModalRoute(builder: (_) => const QuizScreen()),
+              sfModalRoute(
+                builder: (_) => const PickMaterialScreen(tool: StudyTool.quiz),
+              ),
             ),
       ),
       (
-        icon: Icons.auto_awesome_outlined,
-        label: 'Ask Flow',
+        // Flow is already two taps away from here — the orb in the nav bar and
+        // the "Flow suggests" card — so this slot goes to the one thing Home
+        // could not otherwise reach.
+        icon: Icons.event_available_outlined,
+        label: 'Exams',
         color: sf.emeraldInk,
         background: sf.emeraldSoft,
         onTap: () => Navigator.of(context).push(
-              sfRoute(builder: (_) => const ChatScreen()),
+              sfRoute(builder: (_) => const ExamsScreen()),
             ),
       ),
     ];
@@ -443,55 +478,118 @@ class HomeScreen extends ConsumerWidget {
       for (var i = 0; i < rows.length; i++)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
-          child: SfCard(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            onTap: () => ref.read(toggleBlockDoneProvider)(rows[i]),
-            child: Row(
+          child: _TaskCard(block: rows[i]),
+        ),
+    ];
+  }
+}
+
+/// Opens whatever the block is for — the same routing the Planner's rows
+/// use. Blocks written before the editor required a target have neither, and
+/// simply do nothing.
+void _openBlock(BuildContext context, WidgetRef ref, StudyBlock block) {
+  if (block.materialId != null) {
+    ref.read(selectedMaterialProvider.notifier).update(block.materialId!);
+    Navigator.of(context).push(
+      sfRoute(builder: (_) => const DocumentScreen()),
+    );
+  } else if (block.examId != null) {
+    ref.read(selectedExamProvider.notifier).update(block.examId!);
+    Navigator.of(context).push(
+      sfRoute(builder: (_) => const ExamDetailScreen()),
+    );
+  }
+}
+
+/// One of today's blocks: what it is, how far through its practice you are,
+/// and whether that has finished it.
+///
+/// **The tick is not a control.** It used to toggle `done` on tap, which made
+/// "I have finished this" a claim you could make without doing anything — and
+/// untick a task you had genuinely completed. It now reports the progress bar
+/// beneath it: work through the material's cards and questions and the box
+/// fills itself. There is nothing to uncheck, because there is nothing the tap
+/// decided.
+class _TaskCard extends ConsumerWidget {
+  const _TaskCard({required this.block});
+
+  final StudyBlock block;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sf = context.sf;
+    final accent = block.accent.color(context);
+    final materialId = block.materialId;
+    final progress = materialId == null
+        ? StudyProgress.none
+        : ref.watch(materialProgressProvider(materialId));
+
+    final meta = [block.window, block.duration]
+        .where((s) => s.isNotEmpty)
+        .join(' · ');
+
+    return SfCard(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      // Tapping opens what the block is for, the same as the Planner's rows.
+      onTap: () => _openBlock(context, ref, block),
+      child: Row(
+        children: [
+          _Checkbox(checked: block.done, color: accent),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _Checkbox(
-                  checked: rows[i].done,
-                  color: rows[i].accent.color(context),
+                Text(
+                  block.title,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: block.done ? sf.ink3 : sf.ink,
+                    decoration:
+                        block.done ? TextDecoration.lineThrough : null,
+                    decorationColor: sf.ink3,
+                  ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                const SizedBox(height: 2),
+                Text(
+                  meta.isEmpty ? 'No time set' : meta,
+                  style: TextStyle(fontSize: 11, color: sf.ink3),
+                ),
+                // Only where there is practice to measure. A bar over a block
+                // with nothing generated yet would sit at 0% and read as "you
+                // have done none of it" rather than "there is nothing here".
+                if (progress.value != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
                     children: [
-                      Text(
-                        rows[i].title,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: rows[i].done ? sf.ink3 : sf.ink,
-                          decoration: rows[i].done
-                              ? TextDecoration.lineThrough
-                              : null,
-                          decorationColor: sf.ink3,
+                      Expanded(
+                        child: SfProgress(
+                          value: progress.value!,
+                          color: accent,
+                          height: 4,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        [rows[i].window, rows[i].duration]
-                            .where((s) => s.isNotEmpty)
-                            .join(' · '),
-                        style: TextStyle(fontSize: 11, color: sf.ink3),
-                      ),
+                      const SizedBox(width: 8),
+                      SfMono(progress.label!, size: 10, color: sf.ink3),
                     ],
                   ),
-                ),
-                Container(
-                  width: 4,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: rows[i].accent.color(context),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
+                ],
               ],
             ),
           ),
-        ),
-    ];
+          const SizedBox(width: 8),
+          Container(
+            width: 4,
+            height: 36,
+            decoration: BoxDecoration(
+              color: accent,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -503,7 +601,16 @@ class _Checkbox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
+    return Semantics(
+      label: 'Done',
+      checked: checked,
+      // Read-only, and marked as such: a screen reader should not offer to
+      // activate something that does nothing.
+      readOnly: true,
+      container: true,
+      child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+          child: AnimatedContainer(
       duration: const Duration(milliseconds: 160),
       width: 24,
       height: 24,
@@ -515,9 +622,11 @@ class _Checkbox extends StatelessWidget {
           width: 2,
         ),
       ),
-      child: checked
-          ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
-          : null,
+            child: checked
+                ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
+                : null,
+          ),
+      ),
     );
   }
 }
@@ -760,30 +869,24 @@ class _ResumeCard extends StatelessWidget {
                   boxShadow: AppShadows.resolve(
                       AppShadows.sm, Theme.of(context).brightness),
                 ),
-                child: Stack(
+                // Ruled lines suggesting a page. There used to be a "p.42"
+                // in the corner — the same page number on every document,
+                // whatever it was.
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        for (final w in [0.70, 0.85, 0.60, 0.78])
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 3),
-                            child: FractionallySizedBox(
-                              alignment: Alignment.centerLeft,
-                              widthFactor: w,
-                              child: Container(
-                                height: 2,
-                                color: scheme.outline,
-                              ),
-                            ),
+                    for (final w in [0.70, 0.85, 0.60, 0.78])
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 3),
+                        child: FractionallySizedBox(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: w,
+                          child: Container(
+                            height: 2,
+                            color: scheme.outline,
                           ),
-                      ],
-                    ),
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: SfMono('p.42', size: 7, color: sf.ink4),
-                    ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -866,6 +969,10 @@ class _NextExamCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final sf = context.sf;
     final exam = ref.watch(nextExamProvider);
+    // The same exam with its attachments resolved, for the preparation line.
+    final prep = (ref.watch(examPrepsProvider).value ?? const <ExamPrep>[])
+        .where((p) => p.exam.id == exam?.id)
+        .firstOrNull;
 
     return SfCard(
       onTap: onTap,
@@ -923,10 +1030,17 @@ class _NextExamCard extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 10),
-            SfProgress(value: exam.preparation, color: sf.coral),
+            // Preparation is the mean progress of the attached materials, so
+            // an exam with none attached has nothing to report — say that
+            // rather than draw an empty bar reading 0%.
+            SfProgress(value: prep?.preparation ?? 0, color: sf.coral),
             const SizedBox(height: 4),
-            Text('${(exam.preparation * 100).round()}% prepared',
-                style: TextStyle(fontSize: 10, color: sf.ink3)),
+            Text(
+              prep == null || !prep.hasMaterials
+                  ? 'No materials added'
+                  : '${prep.preparationLabel} prepared',
+              style: TextStyle(fontSize: 10, color: sf.ink3),
+            ),
           ],
         ],
       ),
@@ -937,7 +1051,9 @@ class _NextExamCard extends ConsumerWidget {
 class _FlowSuggestionCard extends ConsumerWidget {
   const _FlowSuggestionCard({required this.onStart});
 
-  final VoidCallback onStart;
+  /// Takes the suggestion rather than nothing: the caller needs to know which
+  /// document was named to hand it to Flow.
+  final void Function(FlowSuggestion suggestion) onStart;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -981,7 +1097,7 @@ class _FlowSuggestionCard extends ConsumerWidget {
               variant: SfButtonVariant.soft,
               size: SfButtonSize.sm,
               trailingIcon: Icons.arrow_forward_rounded,
-              onPressed: onStart,
+              onPressed: () => onStart(suggestion),
             ),
           ],
         ],

@@ -7,10 +7,9 @@ import '../../core/navigation.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/study_material.dart';
-import '../../data/models/subject.dart';
 import '../documents/document_screen.dart';
-import '../summaries/summaries_view_model.dart';
 import '../upload/upload_screen.dart';
+import 'material_browser.dart';
 import 'materials_view_model.dart';
 
 class MaterialsScreen extends ConsumerStatefulWidget {
@@ -304,15 +303,14 @@ class _MaterialRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final sf = context.sf;
-    final scheme = context.scheme;
-    final accent = material.accent.color(context);
     final selecting = ref.watch(materialSelectionModeProvider);
     final selected =
         ref.watch(materialSelectionProvider).contains(material.id);
 
-    return SfCard(
-      padding: const EdgeInsets.all(14),
+    return MaterialRow(
+      material: material,
+      selected: selected,
+      leading: _SelectionBox(visible: selecting, checked: selected),
       // In selection mode a tap ticks rather than opens — otherwise the two
       // gestures fight, and opening a document you meant to tick is a
       // surprise that costs a round trip back.
@@ -321,68 +319,6 @@ class _MaterialRow extends ConsumerWidget {
           : _open(context, ref),
       onLongPress: () =>
           ref.read(materialSelectionProvider.notifier).start(material.id),
-      color: selected ? sf.indigoSoft : null,
-      borderColor: selected ? scheme.primary : null,
-      child: Row(
-        children: [
-          _SelectionBox(visible: selecting, checked: selected),
-          SoftIconTile(
-            icon: material.icon,
-            color: accent,
-            width: 44,
-            height: 52,
-            radius: 10,
-            iconSize: 20,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  material.title,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.1,
-                    color: sf.ink,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(material.meta,
-                    style: TextStyle(fontSize: 11, color: sf.ink3)),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SfProgress(
-                        value: material.progress,
-                        color: accent,
-                        height: 4,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 34,
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: SfMono(
-                          '${(material.progress * 100).round()}%',
-                          size: 10,
-                          color: sf.ink3,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 4),
-          Icon(Icons.chevron_right_rounded, size: 18, color: sf.ink4),
-        ],
-      ),
     );
   }
 }

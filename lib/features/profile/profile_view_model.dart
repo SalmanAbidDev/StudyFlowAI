@@ -122,8 +122,10 @@ class ProfileStats {
   String get masteredLabel => '$cardsMastered';
 }
 
-/// Consecutive days, counting back from today, on which at least one study
-/// block was ticked off.
+/// Consecutive days, counting back from today, that the caller judged active.
+///
+/// [days] is the set of **fully completed** days — every block ticked. It was
+/// once "any block ticked", which meant one of four tasks kept a streak alive.
 ///
 /// Today not being done yet does **not** break the streak — the day is still
 /// running. It starts from yesterday in that case, which is how every app that
@@ -154,14 +156,24 @@ int streakFrom(Set<DateTime> days, DateTime today) {
 /// ticked. Mastered cards come from `flashcards.interval_days`, which
 /// `reviewCard` writes.
 final profileStatsProvider = FutureProvider<ProfileStats>((ref) async {
-  final blocks = await ref.watch(plannerRepositoryProvider).completedBlocks();
+  final blocks = await ref.watch(plannerRepositoryProvider).blockHistory();
 
+  // Hours count every finished block. The **streak** counts only days where
+  // nothing was left undone — ticking one of four blocks used to keep a streak
+  // alive, which made it a measure of opening the app rather than of studying.
   var minutes = 0;
-  final days = <DateTime>{};
+  final planned = <DateTime, int>{};
+  final finished = <DateTime, int>{};
   for (final block in blocks) {
+    planned[block.day] = (planned[block.day] ?? 0) + 1;
+    if (!block.done) continue;
     minutes += block.minutes;
-    days.add(block.day);
+    finished[block.day] = (finished[block.day] ?? 0) + 1;
   }
+  final days = {
+    for (final entry in planned.entries)
+      if (finished[entry.key] == entry.value) entry.key,
+  };
 
   final mastered =
       await ref.watch(analyticsRepositoryProvider).masteredCount();

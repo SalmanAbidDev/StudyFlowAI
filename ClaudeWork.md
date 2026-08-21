@@ -114,7 +114,8 @@ subjects                             name, accent (enum), icon (text key)
   │           └── quiz_questions     
   │                 └── quiz_options  label, body, is_correct
   ├── study_blocks                   scheduled_on, starts_at, ends_at, position, done
-  ├── exams                          exam_date, preparation
+  ├── exams                          exam_date, exam_time, priority
+  │     └── exam_materials           what it is revised from
   └── study_sessions                 started_at, duration_minutes, focus_score
 quiz_attempts                        correct, total, elapsed_seconds, missed[]
 chat_threads ── chat_messages        role (enum), content, sources[]
@@ -138,7 +139,10 @@ Storage: private bucket `materials`, 50 MB cap, mime-restricted, 4 policies.
 20260810131459  cover_remaining_foreign_keys
 20260817072046  starter_content_starts_unread
 20260817072750  seed_guard_uses_explicit_marker
-20260818114500  materials_source_url
+20260818084433  materials_source_url
+20260820091317  exam_editor_time_priority_and_materials
+20260820110100  study_blocks_link_material_or_exam
+20260820130440  flashcards_difficulty
 ```
 
 `profiles` gained `starter_seeded_at timestamptz` in the last one.
@@ -156,7 +160,8 @@ Storage: private bucket `materials`, 50 MB cap, mime-restricted, 4 policies.
   `auth.users`). The app never has to handle "signed in but no profile".
 - **`exams.days_left` is deliberately not stored.** It is `exam_date - today`;
   a stored copy is wrong by morning. Same reasoning killed a stored
-  `study_blocks.duration`.
+  `study_blocks.duration` — and later removed `exams.preparation` outright
+  (§5.7).
 - **Storage objects are keyed `<user-id>/<timestamp>-<name>`.** The bucket
   policies compare the first path segment to `auth.uid()`. That, not the bucket
   being private, is what stops one account reading another's files. Do not
@@ -221,6 +226,7 @@ lib/
   core/
     config/supabase_config.dart --dart-define reader + startup assert
     navigation.dart             sfRoute / sfModalRoute — see §3.2
+    config/ai_config.dart       function name + limits. **No key** (§5.5.2)
     preferences.dart            PreferencesStore seam + preferencesProvider
     theme/                      design tokens (8 files, barrel: theme.dart)
     widgets/                    shared components (barrel: widgets.dart)
@@ -234,7 +240,7 @@ lib/
                                 flashcard, summary_section, quiz, profile,
                                 achievement (catalogue + progress — see §5.2)
     repositories/               auth, library, planner, study, profile,
-                                analytics, chat, storage
+                                analytics, chat, storage, ai
   features/<name>/
     <name>_screen.dart          View
     <name>_view_model.dart      ViewModel (providers)
@@ -245,6 +251,30 @@ lib/
 19 feature folders: analytics, auth, categories, chat, components, documents,
 exams, flashcards, home, materials, onboarding, planner, premium, profile,
 quiz, shell, splash, summaries, upload.
+
+**There is a server half too**, which is easy to miss because it is not Dart:
+
+```
+supabase/functions/ai/index.ts   the only thing that talks to Gemini (§5.5.2)
+```
+
+It is deployed separately from the app — changing the model, a prompt or the
+daily allowance is a function deploy, not a release. Nothing in `lib/` holds
+an API key.
+
+`exams/` is three screens: the list, `exam_editor_screen.dart` (add and edit
+share one screen) and `exam_detail_screen.dart`.
+
+`materials/` carries more than its own tab, because five surfaces now show the
+library (§5.5.1): `material_browser.dart` (the shared row and searchable list),
+`history_screen.dart`, `pick_material_screen.dart`, and
+`generated_empty_view.dart`. It also owns the AI-facing pieces that three
+features share: `generate_view_model.dart` and `generate_button.dart` (the
+`GenerateBar` under every empty practice screen) and `study_progress.dart`
+(§5.5.3).
+
+`planner/` is the screen plus `block_editor_screen.dart` (add and edit share
+one screen, like the exam editor).
 
 Two of those are one screen apart and easy to confuse: **`documents/` is what
 opens when you tap a material** (the file itself — §5.3.2), and `summaries/`
@@ -368,15 +398,22 @@ follows, which reproduces what the pre-Riverpod `State` objects did:
 - Shell-resident screens (Home, Materials, Planner, Insights) live in an
   `IndexedStack` that never disposes → their providers are **not** autoDispose,
   so a tab switch preserves state.
-- Pushed routes (Quiz, Chat, Flashcards, Upload, Document, Summaries,
-  Onboarding, Auth, Premium) died with the route → their providers **are**
-  autoDispose, so reopening gives a clean slate. Without this, reopening the
-  quiz would resume the previous run's score — and `documentBytesProvider`
-  would keep every PDF you had opened resident for the session.
+- Pushed routes (Quiz, Chat, Flashcards, Upload, Document, Summaries, History,
+  Pick material, Onboarding, Auth, Premium) died with the route → their
+  providers **are** autoDispose, so reopening gives a clean slate. Without
+  this, reopening the quiz would resume the previous run's score — and
+  `documentBytesProvider` would keep every PDF you had opened resident for the
+  session.
+- **Two exceptions, both deliberate:** `selectedMaterialProvider` (which
+  document the app is working on) and `chatDocumentProvider` (which document
+  Flow is holding) are **not** autoDispose. They are set by one screen and read
+  by the next, so disposing them with the route that set them would lose the
+  answer between the picker and the deck.
 
-**Timers belong to the provider, not the widget.** Quiz clock, chat's 1.4 s fake
-latency: created in `build()`, cancelled via `ref.onDispose`. This removed
-several `if (!mounted) return` guards.
+**Timers belong to the provider, not the widget.** The quiz clock is created in
+`build()` and cancelled via `ref.onDispose`. This removed several
+`if (!mounted) return` guards. (Chat used to hold a second one — a 1.4 s fake
+latency before a scripted reply. Both are gone; see §5.6.)
 
 **`AppShell` has no `initialPage` argument.** Seed it with a `ProviderScope`
 override of `initialShellPageProvider`. A widget argument would force mutating
@@ -658,11 +695,29 @@ never actually visible anywhere in the app.
   hold. The orb goes in `SfButton`'s `leading` slot — including on
   `SfButton.iconOnly`, which now takes either an `icon` glyph or a `leading`
   widget — because the orb is painted, not a font character.
-- **Summarize is a floating pill, not a Material `FloatingActionButton`** —
-  that would drag Material's shape, elevation and typography in against §6.1.
-  It floats over the viewer rather than taking a row, because a document wants
-  every pixel of height. It pushes `SummariesScreen`, which keeps the
-  provenance banner and the expandable sections and lost its own action row.
+- **Summarize is the header's icon button**, in the slot a bookmark used to
+  hold: the same `SfIconButton` the bookmark was, with `auto_awesome_rounded`
+  in place of the bookmark glyph and tinted `scheme.primary` — it is the one
+  control on the screen that invokes Flow. It pushes `SummariesScreen`, which
+  keeps the expandable sections and lost its own action row. Its provenance
+  banner is conditional now (§5.5.2), and the screen **generates** the summary
+  rather than reading a seeded one.
+
+  Two placements were tried and rejected before that. A **floating gradient
+  pill** over the bottom-right of the viewer, on the reasoning that a document
+  wants every pixel of height — wrong the moment the body became the real
+  document rather than a summary, because the pill then sat *on top* of the
+  thing it was asking you to read, worst on a PDF where it covered the corner
+  of the page. Then the **same pill moved into the header**, which fixed the
+  overlap but spent a third of the header's width on a word the icon already
+  says. A header slot is an icon slot.
+
+- **The bookmark is gone from both screens**, and
+  `summaryBookmarkedProvider` with it. It toggled a flag nothing persisted and
+  nothing read, so the only thing it did was forget your bookmark as soon as
+  you left the screen. Summaries' trailing slot is now an empty `SizedBox` of
+  the same width, so the title keeps its measure. Bookmarks are worth having —
+  as a column and a repository method, not as an icon that appears to work.
 
 ### 5.3.3 Profile preferences
 
@@ -777,7 +832,488 @@ The card sits **above** "Or add from", not below: a transfer in flight is the
 most important thing on the screen while it runs, and underneath two rows of
 tiles it fell off the bottom of a phone viewport.
 
+### 5.5.1 The library, reachable from everywhere
+
+The library used to be a destination — the Materials tab, and nothing else
+could see it. Five surfaces need it now, so there is **one row widget and one
+searchable list**, in `features/materials/material_browser.dart`:
+
+- `MaterialRow` — icon, title, meta, progress. The Materials tab passes its
+  selection tick as `leading`; nothing else does. A copy per screen is how the
+  progress bar ends up on four of them and the fifth quietly loses it.
+- `MaterialBrowser` — the whole library with a search box over it. Its query is
+  **local state, not a provider**: the Materials tab keeps its own in
+  `materialsQueryProvider`, and sharing one would mean typing in History
+  silently filtering the tab behind it. The matching itself is
+  `filterMaterials()`, a plain function both paths call.
+
+Who uses it:
+
+| Surface | Picking a document means |
+| --- | --- |
+| Materials tab | Open it (or tick it, mid-selection) |
+| Add material → History | Open it. Three most recent inline, "View all" for the rest |
+| History screen | Open it. Search only — no pills, no multi-select, no delete, and `showProgress: false`: the question here is what was added, not how far through it you are |
+| Flashcards / Quiz picker | Build practice from it |
+| Flow's "Read from" sheet | Hand it to Flow as context |
+
+**`selectedMaterialProvider` and `currentMaterialProvider` moved out of
+Summaries** into `materials_view_model.dart`. "Which document is open" is a
+fact about the library; four features read it, and three of them were importing
+a fourth feature's file for something that was never about summaries.
+
+**Flashcards and Quiz ask *before* they open, but only when they have to.** From
+Home nothing has been chosen, so `PickMaterialScreen` asks. From a document the
+answer is already known and both screens open straight onto it — asking again
+would be asking a question the app can see the answer to. Neither takes the
+document as a constructor argument; both read `selectedMaterialProvider`, which
+is what makes the two entry points the same screen.
+
+`deckProvider` and `quizDataProvider` are scoped to that selection
+(`deckForMaterial` / `quizForMaterial`), falling back to the newest of either
+when there is no selection at all. `GeneratedEmptyView` names the document — "*Chapter 4* has
+no cards yet" — with the Generate button under it. **That copy has been wrong
+twice**: first "Upload a document and Flow will build a deck from it", which
+was wrong once a document had been picked, then "once its AI is connected,
+which it isn't yet", which stopped being true the day it was. User-facing copy
+that describes the state of the *project* rather than the state of the *data*
+goes stale silently — prefer the latter.
+
+### 5.5.2 The AI
+
+**The provider is Google Gemini** (`gemini-3.7-flash`), reached over raw HTTP.
+There is no Dart SDK for it and none is needed.
+
+**The key is never in the app.** Everything goes through the `ai` Supabase Edge
+Function (`supabase/functions/ai/index.ts`), which holds `GEMINI_API_KEY` as a
+server-side secret. This is not caution for its own sake: earlier in this
+project we pulled the Supabase project URL straight out of a release APK with
+`grep` on `libapp.so`, and a key compiled into the binary comes out the same
+way. `lib/core/config/ai_config.dart` holds the function name and the limits —
+**no secret, deliberately**, and the file says so.
+
+Setting the key is a dashboard step, not a rebuild: **Edge Functions → Secrets
+→ `GEMINI_API_KEY`**. The model and the daily allowance live in the function,
+so changing either is a redeploy rather than an app release.
+
+**The function reads through the caller's JWT and never uses the service-role
+key.** Row Level Security is what stops one user's material id resolving to
+another user's document; a service-role client would make that a bug away
+instead of impossible.
+
+**How a document reaches the model** — `sourceParts()` in the function:
+
+| Kind | What is sent |
+| --- | --- |
+| PDF, image | The file itself, base64 `inline_data`, capped at 15MB per request |
+| Text | The decoded text |
+| Link | The URL plus `tools: [{"type": "url_context"}]` — Gemini fetches the page itself |
+
+Nothing is summarised or truncated on the way. When the header says Flow is
+reading Chapter 4, it is reading Chapter 4.
+
+**Overload is retried, then routed around.** Gemini answers a busy model with
+`503 UNAVAILABLE` — "this model is currently experiencing high demand" — which
+is about *that model*, not the request. `MODEL_CHAIN` gives the primary one
+extra go after ~900ms and then moves down to `gemini-3.6-flash` and
+`gemini-2.5-flash`, immediately, because a busy model stays busy. Every model
+in the chain supports both `url_context` and `response_schema`, which the link
+and generation paths depend on — **check that before adding one**. Only
+429/500/502/503/504 are retried; a 400 names a real problem with the request
+and retrying it would just cost time and money. The model that served a request
+is logged, so `query_logs` says which one answered.
+
+**Generation is structured, not parsed out of prose.** Cards, questions and
+summary sections all come back through `response_schema`, so the shape is
+guaranteed by the API rather than by a regex over markdown. Four cards and four
+questions, from `AiConfig.generatedItemCount`; a summary is 3–6 sections of
+2–4 bullets, because how many sections a document has is a property of the
+document rather than a number to fix.
+
+**All three empty screens carry the same `GenerateBar`** — Flashcards, Quiz and
+Summaries. Summaries' provenance banner is now hidden when there is nothing to
+describe: it used to read "Generated by Flow · 0 pages → 0 sections" over an
+empty screen, crediting work nobody had done, and its refresh icon said
+"Regenerating needs the AI service" and did nothing. The icon rewrites the
+summary now, and shows a spinner while it does.
+
+**The app writes the generated rows, not the function.** They go in under the
+user's own session, so RLS applies to them like everything else. Generating
+replaces rather than appends — a second press on an empty screen would
+otherwise silently double the deck.
+
+**The daily chat allowance is enforced server-side** by counting the user's own
+`chat_messages` rows for the day. A client-side tally would reset on reinstall
+and could be edited by anyone who wanted more. The client sends its UTC offset
+so "midnight" is the user's midnight; that is a convenience, not a security
+boundary — spoofing it shifts the window and does not lift the cap.
+
+**An answer is saved to the thread it was asked in, but only *shown* if that
+conversation is still on screen.** Switching documents mid-answer would
+otherwise drop a reply about Chapter 4 into last week's lecture notes.
+
+### 5.5.3 Progress is earned now
+
+Three columns had setters nothing ever called: `materials.progress`,
+`flashcards.interval_days` (via `reviewCard`) and, before it was deleted,
+`exams.preparation`. The first two are written now.
+
+- **`reviewCard` is called.** "Again" and "Got it" under a card used to be pure
+  navigation — nothing was written down, so the SM-2 scheduling never ran and
+  "342 mastered" on the profile could never become true. They read Previous and
+  Next now: **Next is the only one that records anything**, because going back
+  is not a judgement about a card. On the last card it reads **Done**, records
+  that card and pops the deck — the last card is the one that takes a material
+  to 100%, so skipping the write there would leave the day's task permanently
+  one card short of ticking.
+- **A material's progress is `(cards reviewed + questions answered) / (cards +
+  questions)`**, computed in `progressByMaterial()` from facts already in the
+  tables: a card counts once `interval_days` leaves zero, a quiz counts once a
+  run is in `quiz_attempts`. There is no per-question row, so a quiz is
+  all-or-nothing **by design rather than by accident**.
+- `StudyProgress.value` is `double?` — **null when nothing has been generated**,
+  because "no cards exist" and "none of them are done" are different things and
+  only the second is a 0% worth drawing.
+- `syncStudyProgressProvider` writes it back to `materials.progress` — which is
+  what makes exam preparation (§5.7) move — and then **ticks off any of today's
+  blocks pointing at that material.**
+
+**Home's task tick is a readout, not a control.** It used to toggle `done` on
+tap, which made "I have finished this" a claim you could make without doing
+anything, and let you untick something you had genuinely completed. It now
+reports the bar beneath it. There is nothing to uncheck because the tap decides
+nothing — the semantics say `isReadOnly` for the same reason.
+
+### 5.5.4 Flashcards: Next and Previous, and a difficulty that is real
+
+The two buttons under a card were **Again** and **Got it** — a correctness
+judgement. They are **Previous** and **Next** now, which say where you are
+going. Consequences worth knowing before changing either:
+
+- **Only Next records anything.** Going back is not a judgement about a card,
+  so Previous is pure navigation. Next calls `reviewCard`, and that write is
+  what the progress bar, `materials.progress` and the day's auto-ticking task
+  all rest on (§5.5.3).
+- **On the last card Next becomes Done**, records that card, and pops the deck.
+  The last card is the one that takes a material to 100%, so a Done that only
+  popped would leave every task permanently one card short of ticking. The
+  write is a round trip, so the button shows a spinner sized to the icon —
+  a button that looks idle while it works reads as broken.
+- **Previous is disabled on the first card**, at 45% opacity, rather than
+  responding by doing nothing.
+- **Restart goes to card one** from wherever you are. It used to only un-flip
+  the current card, which is what tapping the card already does.
+- **The settings button is gone.** Its `onPressed` was empty.
+
+**"Mastery: 60%" is gone**, and its replacement needed a schema change rather
+than a rename. Renaming the buttons removed the only correctness signal, so
+there is nothing to *infer* difficulty from: no ease curve, no lapse count.
+Difficulty is a property of the card instead — `flashcards.difficulty`, 1 to 5,
+**rated by the model that wrote the card**, filling the five dots green through
+coral. It is nullable, and cards generated before the column existed read "Not
+rated" rather than being given an invented number.
+
+### 5.5.5 The quiz stores answers instead of counting them
+
+Adding a **Previous** button broke an assumption nothing had needed to state:
+the score was a running total, incremented on each pick. That is safe only
+while the sole direction is forward. With a back button, answering a question,
+going back and answering again would have counted it twice.
+
+`QuizRun.answers` is now a `Map<int, String>` — question index to the option
+picked — and **`correct`, `missed`, `picked` and `revealed` are all derived
+from it**. Re-picking an answered question is ignored, so a score cannot be
+improved by persistence. A test walks back and forward and asserts 2/2 rather
+than 3/2.
+
+The rest of that screen:
+
+- **Next question / See results is disabled until the question is answered.**
+  **Skip** used to sit beside it, which let a quiz be finished having answered
+  none of it — and then wrote that run to `quiz_attempts` as though it meant
+  something.
+- **Previous appears from the second question**, never on the first.
+- **The countdown is gone from the header.** `elapsed` still counts, because
+  the results screen reports how long the run took; there is just no
+  per-question timer rushing a revision exercise.
+- **See results shows a spinner.** It writes the attempt and syncs progress,
+  which can tick off today's task — a round trip the button used to hide.
+
+### 5.5.6 Flow suggests goes where it points
+
+Home's suggestion card opened the **chat** whatever it had just said, so
+"Retry your last quiz — you scored 60%" led to a conversation *about* the quiz
+instead of to the quiz. `FlowSuggestion` carries a `FlowTarget` now
+(`document` / `quiz` / `chat`) and a `materialId`, and the card opens that.
+
+The quiz branch needed the data layer to help: `latestAttempt()` embeds
+`quizzes(material_id)` so the suggestion can reopen the quiz for the document
+it was actually about rather than whichever is newest.
+
+**Also removed from Home:** the resume card's thumbnail had `p.42` printed in
+the corner — the same page number on every document, whatever it was.
+
+### 5.6 Chat holds nothing but real turns
+
+The chat screen used to open on a scripted exchange about stereochemistry and
+answer anything typed from a five-entry match table in `chat_models.dart`. It
+was the most convincing thing in the app and the least real — it read as a
+working AI over documents the account had never held. All of it is gone:
+`openingTranscript`, `chatScript`, `ChatRepository.reset`, and the seeding in
+`currentThreadId`. **Existing seeded rows were deleted from the database too** —
+dropping the code that writes them does nothing about the ones already written,
+and the user would have carried on seeing them.
+
+What replaced it:
+
+- **A thread starts empty.** The transcript renders an `SfEmptyView` instead of
+  an empty `ListView`, worded differently depending on whether the library has
+  anything in it.
+- **The transcript is top-anchored and grows downward**, and `_pinToEnd`
+  follows the end only once it overflows. See §5.6.1 — this one was got wrong
+  twice before it was got right.
+- **Sending still works and still persists.** The question goes to
+  `chat_messages` so the history is there the day a model can read it.
+- **`ChatSession.notice`** carries the "no AI yet" line. It is deliberately
+  *not* a `ChatMessage`: it is never persisted, so it cannot end up in the
+  context a real model is later handed, and it renders outside the transcript
+  as app chrome rather than as a turn in the conversation. An apologetic canned
+  *reply* would have been the same lie in a smaller font.
+- **The header names the one document Flow is holding** — see §5.6.2. It said
+  "Reading 3 docs" on every account (hard-coded), then counted the library
+  (still wrong: Flow reads *one* document, the one you hand it).
+- **The composer lost its mic** (dictation was a dead `onPressed: () {}`) and
+  the header lost its refresh button — it existed only to re-seed the script,
+  and there is nothing left to reset.
+- **Answers are real** (§5.5.2). The composer's send guard lives *inside*
+  `_send`, not on the button's `onTap`: enabled-ness depends on state the
+  composer only learns about on the next frame, and a tap arriving before that
+  frame was silently swallowed — which is exactly how a test caught it.
+- **The suggestion chips** are five questions about the held document:
+  `Summarize it`, `Explain like I'm 5`, `Key takeaways`, `Give me an example`,
+  `What might I be asked?`. Two constraints they all meet — none names specific
+  content ("Summarize ch.4" named a chapter no upload had) and none promises an
+  action ("Quiz me on this" and "Make flashcards" promised things nothing
+  performs). The rail scrolls, so the list can grow.
+
+`typing` and `_TypingBubble` survive unused-but-wired: the moment a model call
+lands it needs exactly that state, and the plumbing is three lines that already
+work.
+
+### 5.6.0 The transcript loaded backwards — read this before touching layout
+
+**`ChatRepository.messages()` sorted the conversation newest-first**, because
+postgrest-dart declares `order(column, {bool ascending = false})`. A bare
+`.order('created_at')` reads as "oldest first" and does the exact opposite.
+
+The symptom pointed straight at the scroll view and away from the cause: while
+you typed, the order was **right**, because `send()` appends the new message to
+the list already in memory. Reopen the screen and it was **reversed**, because
+that is the first time the rows are re-read. Two rounds of scroll-anchoring
+changes were spent on it (§5.6.1) before anyone read the query.
+
+Every bare `.order()` in `lib/` had the same defect — flashcards, study blocks,
+summary sections, exams and the subject list were all sorted backwards and
+nobody had noticed only because those tables were empty. All of them now pass
+`ascending:` explicitly, and `test/query_conventions_test.dart` fails the build
+if a bare one is ever added again. **The fakes cannot catch this class of bug**:
+they return their backing list, so every test sees the order the repository
+*meant*. The source is the only place it is visible.
+
+### 5.6.1 Where the transcript sits — two wrong answers first
+
+**The rule: the conversation starts under the header and grows downward. A new
+message appears below the last one and never moves anything already on screen.
+Only when the thread outgrows the viewport does the view scroll, and then it
+stays at the newest message.**
+
+Both failed attempts are worth keeping written down — not least because
+neither was the actual bug (§5.6.0), and both looked right:
+
+1. **Plain `ListView` + `animateTo(maxScrollExtent)`.** Correct layout, unreliable
+   follow: a short thread has no scroll extent, so the call was a no-op, and on
+   a long one `maxScrollExtent` is an *estimate* while children are still being
+   laid out lazily, so a single call can land short of the end.
+2. **`reverse: true`.** Pins content to the bottom edge. This is what chat apps
+   are assumed to do, and it is wrong for a thread shorter than the screen:
+   every message already on screen **climbs upward** each time you send. That
+   is the "my message moves to the top" complaint — caused by the fix for it.
+
+What is there now is `_pinToEnd`, which does nothing at all until the content
+actually overflows:
+
+- `maxScrollExtent - offset < 1` → already at the end (a short thread always
+  is, at 0) → return. Nothing scrolls, nothing moves.
+- First time it must travel, it **jumps** rather than animating — opening a long
+  thread should start at the newest message, not slide down to it — and calls
+  itself again next frame, because the extent grows as more children get
+  measured. It terminates: each jump forces more of the list to be laid out.
+- Every later arrival animates.
+
+**Do not "fix" this by reversing the list.** The three tests in §8 pin all of
+it: a short thread starting at the top, an existing message not moving when a
+new one arrives, and a long thread opening on the newest message.
+
 ---
+
+### 5.6.2 One document, one conversation
+
+Flow holds **one** document at a time — `chatDocumentProvider`, a nullable id.
+`null` is a real state with a name ("No document selected"), not a placeholder
+for one. `chatMaterialProvider` resolves it against the live library, so a
+document deleted elsewhere cannot go on being named in the header.
+
+It is set from three places: the "Read from" sheet behind the header's document
+icon, Home's **Flow suggests** card, and the **orb on the document screen**.
+The last two both hand over a document already named on screen — opening Flow
+while reading a document and being told "No document selected" asked you to go
+and find the thing in front of you. The
+card's callback takes the whole `FlowSuggestion` for exactly that reason —
+`FlowSuggestion.material` is null on the retry-your-quiz branch, which names a
+topic rather than a file.
+
+**Each document gets its own thread.** `chat_threads.material_id` was in the
+schema and unused; `currentThreadId(userId, materialId:)` now finds or creates
+the thread for that document, and switching documents switches transcripts.
+Two reasons: asking about a chapter and asking about last week's lecture notes
+are different conversations, and one shared transcript would mean handing a
+model context from a document the question is not about.
+
+One trap in that query: **`.eq('material_id', null)` does not express IS NULL**
+in PostgREST. The general no-document thread would never be found again and a
+fresh one would be created on every open. It uses `.isFilter('material_id',
+null)`.
+
+`FakeChatRepository` keys its transcripts by thread id for the same reason —
+a single shared list would let a test pass while the app leaked one document's
+conversation into another's.
+
+### 5.6.3 The planner
+
+One day at a time, chosen from a strip that scrolls through months.
+
+**Blocks are held in drag order, not clock order.** The times are labels; the
+sequence is yours, persisted as `position`. That is also why **nothing warns
+about overlapping times** — warning that 08:00 and 08:30 collide, while telling
+you the clock does not decide the order, would be the screen contradicting
+itself.
+
+**Every block points at a material or an exam.** `material_id` and `exam_id`,
+both `ON DELETE SET NULL` and deliberately not `CASCADE`: deleting a document
+must not silently delete Thursday morning off someone's plan, so the block
+survives with its title as plain text. A free-text option was built and then
+removed — a plan made of loose sentences cannot be opened, cannot inherit a
+subject colour, and cannot tell an exam what it is revising. `isValid`
+therefore requires a link, not just a title and a day.
+
+Linking fills the title and inherits the material's subject, which is what
+gives the accent stripe meaning. `BlockDraft.autoTitle` records the last title
+the editor filled in, so it can tell **its own** title from **yours**: an
+auto-filled one is replaced when you point the block elsewhere, a typed one
+survives. Without it, typing "Past paper" and then attaching the document threw
+the typing away.
+
+**Times are start + length, and both are optional.** The editor collects a
+start and a duration; the *end* is computed at save and still written to
+`ends_at`, so every existing duration and hours-studied calculation keeps
+working untouched — no schema change for time. A block with no start is a task
+for that day and contributes nothing to the day's hours.
+
+**The strip is bounded, not infinite**, and bounded at exactly the range
+`blockCountsProvider` loads — `plannerDaysBack` before today to
+`plannerDaysForward` after. A cell beyond that range would show no count, which
+would be claiming "nothing planned" about a day nobody had asked the database
+about. Its height comes from `_stripHeight(context)`, computed from the text
+scaler: a flat 70 overflowed at scale 1.3, and a tighter formula still missed
+by 1.1px. **Do not put a constant back there.**
+
+**The row has no tick.** Tap opens what it points at, long-press gives Edit and
+Delete, handle drags. Completing a block is something you do to *today*, and
+today is Home's job — the Planner is where you arrange days you are not in. A
+done block still reads as done, struck through. `onTap` is null on a block with
+no link (rows written before the editor required one) — a row that highlights
+and then does nothing is worse than one that does not highlight.
+
+**Ticking lives on Home, on the checkbox alone.** The whole card used to toggle
+done, which made "show me this document" and "I have finished it" the same
+gesture; the card now opens the block's target and only the box completes it.
+The box carries `Semantics(label: 'Mark done', checked:, container: true)` —
+without `container` the card's tap handler swallows it and a screen reader
+never mentions the control that completes the task.
+
+**Ticking a block moves the streak and the hours studied, and nothing else.**
+Not the linked material's progress: a block cannot know how much of a 200-page
+PDF it covered, and a guess would push an invented number into exam preparation
+(§5.7). `_refreshPlanner` is the one place that fans out the invalidations, so
+a new writer cannot forget half of them.
+
+### 5.6.4 The streak counts finished days, not visited ones
+
+`completedBlocks()` filtered to `done = true`, which made a day with one of four
+blocks ticked indistinguishable from a day with all four ticked — and the streak
+counted both. It is `blockHistory()` now, unfiltered, carrying `done` per row,
+because **"was this day finished" cannot be answered from the finished rows
+alone**.
+
+`profileStatsProvider` counts a day only when every block on it is done. Hours
+studied still come from each finished block, so the two numbers measure
+different things on purpose: hours are work done, the streak is days completed.
+`weekActivityProvider`'s `DayState.done` uses the same rule, so the strip and
+the streak cannot disagree.
+
+**Repetition is "Copy this day…"**, a row under the last block, rather than
+recurrence rules. It copies times, links and order; **`done` is never copied** —
+a plan for next Tuesday that arrived already ticked would claim work nobody had
+done.
+
+### 5.7 Exams, and a percentage that had to be earned
+
+The exam cards were drawn against a `preparation` column that **nothing in the
+app ever wrote**. Shipped as-is, every bar would have read 0% forever — the
+same trap as `profiles.streak_days` (§5.1). The column is **dropped**.
+Preparation is derived instead: the mean reading progress of the materials
+attached to the exam.
+
+That is what makes "no materials added" a real state rather than a placeholder.
+`ExamPrep.preparation` returns **`double?`, and null is not zero** — "nothing to
+measure" and "measured, and you have done none of it" are different things to
+tell someone. Every surface honours it: the list row swaps its bar for the
+words, the featured card adds "tap to add them", Home's next-exam card says the
+same, and the detail screen's Flashcards / Quiz / Flow buttons are **disabled**
+until something is attached, because there is nothing to build them from.
+
+The detail screen carries **no practice row**. Flashcards, Quiz and Flow all
+run on one document at a time, and every attached document is already a row
+with those actions a tap away — buttons at the bottom would have had to guess
+which of the attached documents they meant.
+
+`exam_materials` is a join table, not a column: a document can matter to more
+than one exam, and an exam is revised from more than one document. Both foreign
+keys cascade, so deleting either end cleans up after itself.
+`setExamMaterials` deletes-then-inserts rather than diffing — the set is small,
+the sheet hands over exactly what it wants attached, and a diff is three more
+chances to leave a row behind for no saved round trip.
+
+`examPrepsProvider` derives from `materialsProvider`, not from its own progress
+query (§5.1.1), so reading a document moves its exams' preparation with it and
+deleting one takes it out of the average.
+
+**Two more things the design was faking.** The featured card printed the
+literal string `THU · MAY 15 · 9:00 AM` and the words `High priority` on
+whatever exam happened to be next. Both are now columns — `exam_time` (nullable;
+plenty of exams are "some time that Thursday", and forcing a made-up 9:00 would
+put a time on the card nobody chose) and a `exam_priority` enum. The eyebrow
+reads "Next up" when the exam is not a high one.
+
+The empty state has **no action button** — adding is the ＋ in the header, and
+one control per job beats the same job offered twice on one screen. It briefly
+had a centred "Add an exam" button, which both duplicated the ＋ and broke the
+shape every other empty screen shares (§6.1).
+
+The editor refuses to save without a title and a date, by disabling the button
+rather than accepting the input and explaining afterwards. Its date picker's
+`firstDate` is today: `upcomingExams()` filters on `exam_date >= today`, so a
+past date would file the exam straight out of the list you just added it to.
 
 ## 6. Design system
 
@@ -956,10 +1492,52 @@ These were real device bugs, each with a general lesson:
 
 ## 8. Tests
 
-`test/widget_test.dart` — 165 tests:
+`test/query_conventions_test.dart` — one source-level invariant: every
+`.order()` in `lib/` must state `ascending:`. See §5.6.0 for the bug that
+earned it.
+
+`test/widget_test.dart` — 229 tests. `FakeAiRepository` is the seam that
+keeps them offline; `FakeLibraryRepository(summarised: false)` models a
+document nobody has summarised yet, which is the state the Summarize button
+exists for and which an empty account cannot express:
 
 - Flow tests: splash → onboarding → auth → shell, empty-submit rejection,
-  stored-session routing, tab switching, quiz run, flashcard flip, chat reply.
+  stored-session routing, tab switching, quiz run, flashcard flip, and chat —
+  which now asserts on *absence*: an empty opening transcript, no scripted
+  reply on a 3 s wait, no mic, no refresh, and a header count that tracks the
+  fake library instead of always saying three. Three more pin the transcript's
+  position (§5.6.1): short threads start at the top, an existing message does
+  not move when a new one arrives, and a long thread opens on the newest. See
+  §9 for why the short-thread case is the one that matters.
+- Planner (§5.6.3): adding an untimed block, a start plus a length becoming a
+  09:00 – 10:30 window, ticking / editing / deleting a block, the day line
+  counting hours *and* tasks *and* completion, copying a day onto another and
+  finding the copies unticked, and that a block cannot be saved with nothing to
+  point at. Home's tick is tested with the semantics tree on, so it also proves
+  the control is reachable to a screen reader — and that tapping the card opens
+  the document rather than completing it. A `ProviderContainer` test pins the
+  streak refusing a partly finished day (§5.6.4).
+- The AI (§5.5.2), with the Edge Function faked at the repository seam so the
+  suite stays hermetic — no key, no network: generating from an empty deck, an
+  empty quiz and an empty summary each asks for the *selected* document, a
+  generation failure is readable and leaves the button offered, a question
+  carries the held document with it, and the daily allowance disables the
+  composer rather than letting a question be typed that cannot be sent.
+- Practice navigation (§5.5.4, §5.5.5): the last card reads **Done** and pops
+  the deck; the quiz refuses to move on until the question is answered, offers
+  **Previous** only from the second question, and — the one that matters —
+  **walking back and answering again still scores 2/2, not 3/2**. That test
+  exists because adding a back button silently broke a running-total score.
+- Exams (§5.7): adding one through the editor and finding it in the list, the
+  featured card reading the row rather than a fixed string, preparation moving
+  to 42% then 71% as materials are attached (a mean no single document has, so
+  it can only be the derived value), and deleting one from its detail screen.
+- Integration walks, one per route the library is now reachable by (§5.5.1):
+  Add material → History → a document; Home → Flashcards → picker → cards;
+  a document → straight to its cards, *skipping* the picker; a document with
+  nothing generated naming itself in the empty state; and for Flow, that the
+  header names the held document, that each document keeps its own transcript,
+  and that "Flow suggests" hands its document over.
 - Modal tests: the appearance sheet opens/applies, sign-out opens and cancels,
   the upload source sheet fits a short screen and clears the keyboard, and the
   library selection menu deletes **behind a confirmation** — that one pins the
@@ -975,9 +1553,21 @@ These were real device bugs, each with a general lesson:
   just that an error appeared.
 - Geometry assertions where a layout rule is the requirement: the Insights
   range control sits below the title and spans the width, the live progress bar
-  fills from the left, and a sheet clears the keyboard. These are the ones
-  worth writing carefully — the first version of two of them passed against the
-  bug they were written for.
+  fills from the left, a sheet clears the keyboard, and the chat transcript
+  rests on the bottom of its viewport. These are the ones worth writing
+  carefully — the first version of three of them passed against the bug they
+  were written for. The chat one is instructive twice over. The first draft
+  sent **20** messages and asserted the newest was on screen, which passed with
+  the bug present, because an overflowing list ends up at the bottom either
+  way; only a *short* thread tells the layouts apart. **Pick the case where the
+  bug and the fix differ, not the case that looks most realistic.** Then the
+  rewritten test passed against a layout the user still rejected — it asserted
+  the position the transcript settled at, when what they cared about was
+  whether anything **moved**. A geometry test that measures one frame cannot
+  see motion; measure the same widget before and after the change. And the
+  whole exercise was chasing the wrong layer: the real defect was a reversed
+  SQL sort (§5.6.0). **When state is right while you edit it and wrong after a
+  reload, suspect the read, not the view.**
 - Pure-logic tests that need no widget at all, in `ProviderContainer` or plain
   `test()`: `MaterialKind` detection, `streakFrom`, `normaliseUrl`,
   `ProfileStats` labels, and library staleness (§5.1.1). **Prefer these when
@@ -1032,20 +1622,31 @@ Harness notes:
   Supabase dashboard. The button currently says so plainly rather than
   pretending. Wiring it also needs a deep-link intent-filter in
   `AndroidManifest.xml`. (The Apple button was removed from the Auth screen.)
-- **The AI.** Chat replies still come from the scripted table in
-  `chat_models.dart`; summaries and quizzes are seeded rows. The *transcript*
-  is real (persisted to `chat_threads`/`chat_messages`). Home's "Flow suggests"
-  card is a deterministic rule over real rows, not a model (§5.1). Wiring an
-  LLM was kept deliberately separate from wiring the backend.
-- **Summarize does not summarise.** The button and the screen behind it are
-  real (§5.3.2), but the sections it shows are seeded rows — it reads a
-  summary rather than making one. **This is where the AI plugs in**: the
-  document is already fetched as bytes on the screen the button sits on, and
-  a Link material carries its URL, so both inputs are in hand.
+- **~~The AI~~ — built (§5.5.2).** Gemini, behind the `ai` Edge Function.
+  Flashcards, quizzes and summaries are generated from the real document; Flow
+  answers from it. What is *still* rule-based and deliberately so: Home's "Flow
+  suggests" card is a deterministic rule over real rows, not a model (§5.1),
+  and the Planner's Flow note is the same. **The ✨ button on the Planner still
+  does nothing** — auto-planning a week is its own feature and is not built.
 - **`study_sessions` is never written.** Table, `logSession()` and the Insights
   charts all exist, but nothing calls it — there is no study timer in the UI
   yet. Insights will read zero until one is added. **This is the most likely
   next task.**
+- **Generation costs money and nothing meters it.** The 5-a-day cap covers
+  *chat only* (§5.5.2). Flashcards, quizzes and summaries are unlimited, and
+  each call uploads the whole document again — a 10MB PDF summarised four times
+  is 40MB of input billed. No per-user quota, no caching of a document between
+  calls, no view of spend.
+- **Generation replaces silently.** A second press deletes the existing deck,
+  quiz or summary and writes a new one with no confirmation. That is right for
+  the empty-screen button it was built for and wrong for the regenerate icon on
+  Summaries, which can discard a summary you were reading.
+- **A failed generation can leave nothing behind.** Delete-then-insert is not a
+  transaction: if the insert fails after the delete, the old content is gone
+  and the new never arrived. Small window; the fix is a Postgres function.
+- **Quiz progress is all-or-nothing.** No per-question row exists, so a quiz
+  counts once an attempt is recorded and not before (§5.5.3). Answering three
+  of four and leaving shows nothing.
 - **Nothing sends a notification.** The Profile switch is real and persists
   (§5.3.3), but there is no notification plugin, no permission request and no
   scheduler behind it — it records what the user asked for, not something
@@ -1057,9 +1658,11 @@ Harness notes:
 - **The email cannot be changed.** Shown and locked on the Account screen
   (§5.3.3). Supabase needs a confirmation round trip to both the old and new
   address, which is its own flow with its own failure states.
-- **A saved URL is never fetched.** `source_url` is stored and shown, but
-  nothing reads the page — that is the AI's job and there is no AI (§9). The
-  preview screen says so on screen rather than implying the page was captured.
+- **~~A saved URL is never fetched~~ — it is now.** Gemini's `url_context`
+  tool fetches the page at generation and chat time (§5.5.2). The app still
+  stores only the URL and never caches the page, so **a link material is only
+  as good as the page being up and public** — paywalled, login-walled and
+  JS-only pages will produce thin results or none.
 - **Upload retries are gone on the progress path.** Getting a real percentage
   meant streaming the body ourselves (§5.5), which skips the SDK's automatic
   retry/backoff. A dropped connection now fails the upload instead of retrying.
@@ -1093,8 +1696,13 @@ Harness notes:
   costs.
 - **Every `Dialog` and `AlertDialog`.** All modals are bottom sheets now (§6.1).
   `grep showDialog lib/` returns nothing, and that is intentional.
-- **`setState`.** Zero occurrences in `lib/`. Controllers still live in
-  `StatefulWidget`s (§4), but nothing calls `setState`.
+- **~~`setState`~~ — no longer zero, and the claim was wrong before anyone
+  noticed.** There are **12 calls across 10 files**. Every one is genuinely
+  local view state nothing else reads: a form's in-flight `busy` flag, a
+  sheet's tick selection, a search box's query, a focus highlight. Application
+  state is still provider state. The rule that mattered was never "no
+  `setState`" but "nothing another screen needs to see lives in a widget".
+  **Do not put a count back in this file** — it will rot again.
 - **`ShellPage.exams` and `ShellPage.analytics`.** Exams and Insights are
   pushed routes now, not tabs. Putting them back in the enum reintroduces four
   reported bugs at once — see §3.2.
@@ -1184,6 +1792,54 @@ The `<queries>` block lists IMAGE_CAPTURE, GET_CONTENT (`image/*`) and
 OPEN_DOCUMENT (`application/pdf`). From Android 11 these are needed for
 **package visibility**: without them the intent resolves to nothing and the
 picker silently fails to open even though the handling app is installed.
+
+### 10.2 Launcher icons
+
+Sources live in `assets/android/` and `assets/ios/` — generator output, kept
+in the repo so the icons can be regenerated or re-cut without hunting for the
+original export. **`assets/` is not declared in `pubspec.yaml`**, so nothing in
+it is bundled into the app; it is a source folder, not an asset folder. Keep it
+that way, or every icon size ships inside the APK for no reason.
+
+Android, in `android/app/src/main/res/`:
+
+- `mipmap-{l,m,h,xh,xxh,xxxh}dpi/ic_launcher.png` + `_round.png` — the legacy
+  icons, used below API 26. They are *shaped* (transparent corners), which is
+  correct for legacy but would be wrong for an adaptive foreground.
+- `mipmap-{m,h,xh,xxh,xxxh}dpi/ic_launcher_foreground.png` — 108dp at each
+  density (108/162/216/324/432 px). ldpi has no foreground; Android downscales.
+- `mipmap-anydpi-v26/ic_launcher.xml` + `_round.xml` — the adaptive icon, which
+  wins on API 26+. Background is `@color/ic_launcher_background`, defined in
+  `values/ic_launcher_background.xml` as **#beb4e6**. **Re-copy that file
+  whenever the icons are regenerated** — the colour is part of the icon, and a
+  stale one leaves the artwork sitting on last week's background.
+- The manifest declares **both** `android:icon` and `android:roundIcon`.
+  `roundIcon` only matters below API 26 (above it the launcher masks the
+  adaptive icon itself), but minSdk is well under that.
+
+The generator also emits `playstore-icon.png`, `ic_launcher-web.png` and
+`iTunesArtwork@{1,2,3}x.png`. None are used by either build and all have been
+deleted. **A 512×512 opaque square is required by the Play Console at
+submission** — regenerate one then; do not go looking for it here.
+
+iOS, in `ios/Runner/Assets.xcassets/AppIcon.appiconset/`:
+
+- The 15 PNGs, plus the 1024 marketing icon. The generator names that one
+  `ItunesArtwork@2x.png`; it is copied in as **`Icon-App-1024x1024@1x.png`**,
+  which is what Flutter's `Contents.json` references.
+- **`Contents.json` was left as Flutter generated it** rather than taking the
+  generator's. The generator's version declares an `iphone` `76x76@2x` slot,
+  which is not a real iPhone icon size, and points the marketing slot at
+  `ItunesArtwork@2x.png`.
+- **The alpha channel was stripped from all 15.** App Store Connect rejects an
+  app icon that carries one, even a fully opaque one. Every pixel was verified
+  opaque first, so the conversion is lossless — the files got ~30% smaller as a
+  side effect. If you ever regenerate these, strip alpha again: Xcode on
+  Windows cannot warn you, and the rejection arrives at upload time.
+
+Verified in a real `--release` APK, not just on disk: `aapt2 dump badging`
+resolves `icon`/`roundIcon` to the adaptive XML, whose background resolves to
+`#ffc1bbe8`, and all four foreground densities are present in `res/`.
 
 ---
 

@@ -65,6 +65,7 @@ class QuizAttempt {
     required this.correct,
     required this.total,
     required this.missed,
+    this.materialId,
   });
 
   factory QuizAttempt.fromRow(Map<String, dynamic> row) => QuizAttempt(
@@ -73,11 +74,16 @@ class QuizAttempt {
         missed: ((row['missed'] as List?) ?? const [])
             .map((m) => m as String)
             .toList(),
+        // Embedded from `quizzes`, so Home's suggestion can reopen the quiz
+        // for the right document rather than whichever is newest.
+        materialId:
+            (row['quizzes'] as Map<String, dynamic>?)?['material_id'] as String?,
       );
 
   final int correct;
   final int total;
   final List<String> missed;
+  final String? materialId;
 
   double get score => total == 0 ? 0 : correct / total;
 

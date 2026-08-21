@@ -1,7 +1,7 @@
 // lib/features/profile/achievements_screen.dart
 //
 // The full badge catalogue, earned and not. A pushed route — it has a back
-// arrow, so it is not a shell tab (§3.2 of CluadeWork.md).
+// arrow, so it is not a shell tab (§3.2 of ClaudeWork.md).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

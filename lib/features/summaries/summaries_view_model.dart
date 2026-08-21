@@ -3,31 +3,19 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/view_models.dart';
-import '../../data/models/study_material.dart';
 import '../../data/models/summary_section.dart';
 import '../../data/supabase_providers.dart';
+import '../materials/materials_view_model.dart';
 
-/// Which material the Summaries screen is showing. Set before pushing the
-/// route; falls back to the most recent one when opened without a selection.
-final selectedMaterialProvider =
-    NotifierProvider<ValueViewModel<String?>, String?>(
-  () => ValueViewModel(null),
-);
-
-final summaryMaterialProvider = FutureProvider.autoDispose<StudyMaterial?>(
-  (ref) async {
-    final repo = ref.watch(libraryRepositoryProvider);
-    final selectedId = ref.watch(selectedMaterialProvider);
-    if (selectedId == null) return repo.latestMaterial();
-
-    final all = await repo.materials();
-    return all.where((m) => m.id == selectedId).firstOrNull;
-  },
-);
+// `selectedMaterialProvider` and `currentMaterialProvider` used to live here.
+// They moved to materials_view_model.dart: "which document is open" is a fact
+// about the library, and Documents, Flashcards and Quiz all need it too —
+// keeping it under Summaries meant three features importing a fourth's file
+// for something that was never about summaries.
 
 final summarySectionsProvider =
     FutureProvider.autoDispose<List<SummarySection>>((ref) async {
-  final material = await ref.watch(summaryMaterialProvider.future);
+  final material = await ref.watch(currentMaterialProvider.future);
   if (material == null) return const [];
   return ref.watch(libraryRepositoryProvider).summaryFor(material.id);
 });
@@ -38,10 +26,8 @@ final openSummarySectionProvider =
   () => ValueViewModel(0),
 );
 
-/// Whether the document is bookmarked. Not persisted yet — there is no
-/// bookmarks table, and inventing one to back a single icon would be scope
-/// the schema does not need.
-final summaryBookmarkedProvider =
-    NotifierProvider.autoDispose<FlagViewModel, bool>(
-  () => FlagViewModel(initial: false),
-);
+// `summaryBookmarkedProvider` is gone along with the two bookmark icons it
+// backed. It toggled a flag that was never persisted and never read, so the
+// only thing it did was forget your bookmark as soon as you left the screen.
+// Bookmarks are worth having — but as a column and a repository method, not as
+// an icon that appears to work.

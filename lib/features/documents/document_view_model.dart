@@ -10,7 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/study_material.dart';
 import '../../data/supabase_providers.dart';
-import '../summaries/summaries_view_model.dart';
+import '../materials/materials_view_model.dart';
 
 /// The bytes of the open material, or null when there is no file to fetch —
 /// a link has nothing in the bucket.
@@ -18,7 +18,7 @@ import '../summaries/summaries_view_model.dart';
 /// autoDispose: a PDF is megabytes, and holding the last one you opened for
 /// the rest of the session is a memory leak with a nicer name.
 final documentBytesProvider = FutureProvider.autoDispose<Uint8List?>((ref) async {
-  final material = await ref.watch(summaryMaterialProvider.future);
+  final material = await ref.watch(currentMaterialProvider.future);
   final path = material?.storagePath;
   if (material == null || path == null) return null;
   if (material.kind == MaterialKind.link) return null;

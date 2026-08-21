@@ -1,7 +1,7 @@
 // lib/core/widgets/sf_modal_header.dart
 //
 // The bar at the top of a screen that is dismissed with a close button rather
-// than a back arrow (§3.2 of CluadeWork.md: ✕ screens are pushed with
+// than a back arrow (§3.2 of ClaudeWork.md: ✕ screens are pushed with
 // `sfModalRoute`). Upload had this inline; Flashcards and Quiz had it only on
 // their *populated* branch, so an empty deck left the screen with no way out
 // except a "Back" button parked in the middle of the page.
@@ -17,10 +17,15 @@ class SfModalHeader extends StatelessWidget {
     required this.title,
     this.trailing,
     this.onClose,
+    this.leadingIcon = Icons.close_rounded,
     this.padding = const EdgeInsets.fromLTRB(22, 12, 22, 18),
   });
 
   final String title;
+
+  /// ✕ for a modal, a back arrow for a screen pushed with `sfRoute` on top of
+  /// one. The glyph is the only difference — both pop.
+  final IconData leadingIcon;
 
   /// Optional right-hand action. When absent the slot is still reserved, so
   /// the title stays optically centred against the close button.
@@ -40,7 +45,7 @@ class SfModalHeader extends StatelessWidget {
       child: Row(
         children: [
           SfIconButton(
-            icon: Icons.close_rounded,
+            icon: leadingIcon,
             onPressed: onClose ?? () => Navigator.of(context).maybePop(),
           ),
           Expanded(

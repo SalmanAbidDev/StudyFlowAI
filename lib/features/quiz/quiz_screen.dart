@@ -12,6 +12,9 @@ import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/quiz.dart';
 import 'quiz_result_screen.dart';
+import '../materials/generate_button.dart';
+import '../materials/generate_view_model.dart';
+import '../materials/generated_empty_view.dart';
 import 'quiz_view_model.dart';
 
 class QuizScreen extends ConsumerWidget {
@@ -37,10 +40,10 @@ class QuizScreen extends ConsumerWidget {
               // Dismissed with the header's ✕, not with a button sitting in
               // the middle of the page.
               ? const _Framed(
-                  child: SfEmptyView(
+                  footer: GenerateBar(target: GenerateTarget.quiz),
+                  child: GeneratedEmptyView(
                     icon: Icons.quiz_outlined,
-                    title: 'No quiz yet',
-                    body: 'Upload a document and Flow will build one from it.',
+                    noun: 'questions',
                   ),
                 )
               : _QuizBody(run: data),
@@ -53,9 +56,12 @@ class QuizScreen extends ConsumerWidget {
 /// Chrome for the states with no run to show. The playing branch draws its own
 /// header, because it carries the progress rail and the clock.
 class _Framed extends StatelessWidget {
-  const _Framed({required this.child});
+  const _Framed({required this.child, this.footer});
 
   final Widget child;
+
+  /// Pinned under the empty state — the way *out* of having nothing.
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -63,20 +69,33 @@ class _Framed extends StatelessWidget {
       children: [
         const SfModalHeader(title: 'Quiz'),
         Expanded(child: child),
+        ?footer,
       ],
     );
   }
 }
 
-class _QuizBody extends ConsumerWidget {
+class _QuizBody extends ConsumerStatefulWidget {
   const _QuizBody({required this.run});
 
   final QuizRun run;
+
+  @override
+  ConsumerState<_QuizBody> createState() => _QuizBodyState();
+}
+
+class _QuizBodyState extends ConsumerState<_QuizBody> {
+  /// True while the finished run is being written and progress synced. Local
+  /// rather than in the run: it is about this screen's button, and the run is
+  /// gone the moment the results replace it.
+  var _submitting = false;
 
   /// Advances, or leaves for the results if the deck is finished.
   Future<void> _advance(BuildContext context, WidgetRef ref) async {
     if (ref.read(quizProvider.notifier).advance()) return;
 
+    setState(() => _submitting = true);
+    final finished = ref.read(quizProvider).value ?? widget.run;
     await ref.read(quizProvider.notifier).recordAttempt();
     if (!context.mounted) return;
 
@@ -85,19 +104,23 @@ class _QuizBody extends ConsumerWidget {
     Navigator.of(context).pushReplacement(
       sfModalRoute(
         builder: (_) => QuizResultScreen(
-          correct: run.correct,
-          total: run.total,
-          elapsedSeconds: run.elapsed,
-          missed: run.missed,
+          // Read back from the provider, not from `widget.run`: the last
+          // answer is picked *after* this widget's run was handed to it.
+          correct: finished.correct,
+          total: finished.total,
+          elapsedSeconds: finished.elapsed,
+          missed: finished.missed,
         ),
       ),
     );
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final sf = context.sf;
     final scheme = context.scheme;
+    final run = widget.run;
+    final submitting = _submitting;
     final q = run.question!;
 
     return Column(
@@ -135,25 +158,6 @@ class _QuizBody extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: sf.coralSoft,
-                      borderRadius: AppRadius.brSm,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.schedule_rounded,
-                            size: 14, color: sf.coral),
-                        const SizedBox(width: 6),
-                        SfMono(run.clock,
-                            size: 13,
-                            weight: FontWeight.w700,
-                            color: sf.coralInk),
-                      ],
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -235,16 +239,22 @@ class _QuizBody extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(22, 12, 22, 16),
               child: Row(
                 children: [
-                  Expanded(
-                    child: SfButton(
-                      'Skip',
-                      variant: SfButtonVariant.secondary,
-                      size: SfButtonSize.lg,
-                      expand: true,
-                      onPressed: () => _advance(context, ref),
+                  // Only from the second question — the first has nowhere to
+                  // go back to. Skip used to sit here, which let you finish a
+                  // quiz having answered none of it.
+                  if (!run.isFirstQuestion) ...[
+                    Expanded(
+                      child: SfButton(
+                        'Previous',
+                        variant: SfButtonVariant.secondary,
+                        size: SfButtonSize.lg,
+                        expand: true,
+                        icon: Icons.arrow_back_rounded,
+                        onPressed: ref.read(quizProvider.notifier).back,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
+                    const SizedBox(width: 8),
+                  ],
                   Expanded(
                     flex: 2,
                     child: SfButton(
@@ -252,7 +262,13 @@ class _QuizBody extends ConsumerWidget {
                       size: SfButtonSize.lg,
                       expand: true,
                       trailingIcon: Icons.arrow_forward_rounded,
-                      onPressed: () => _advance(context, ref),
+                      // Recording the attempt and syncing progress is a round
+                      // trip; without this the button looks stuck.
+                      busy: submitting,
+                      // Disabled until the question is answered.
+                      onPressed: run.canAdvance && !submitting
+                          ? () => _advance(context, ref)
+                          : null,
                     ),
                   ),
                 ],

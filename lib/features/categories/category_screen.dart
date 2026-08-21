@@ -124,10 +124,10 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
                       _ChipWrap(
                         children: [
                           for (final subject in mine)
-                            _CategoryChip(
+                            SfSelectChip(
                               label: subject.name,
                               icon: subject.icon,
-                              accent: subject.accent,
+                              accent: subject.accent.color(context),
                               selected: state.subject?.id == subject.id,
                               onTap: () => _pickSubject(subject),
                             ),
@@ -144,10 +144,10 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
                       _ChipWrap(
                         children: [
                           for (final suggestion in suggestions)
-                            _CategoryChip(
+                            SfSelectChip(
                               label: suggestion.name,
                               icon: suggestion.icon,
-                              accent: suggestion.accent,
+                              accent: suggestion.accent.color(context),
                               selected: state.suggestion?.name ==
                                   suggestion.name,
                               onTap: () => _pickSuggestion(suggestion),
@@ -245,77 +245,5 @@ class _ChipWrap extends StatelessWidget {
   }
 }
 
-class _CategoryChip extends StatelessWidget {
-  const _CategoryChip({
-    required this.label,
-    required this.icon,
-    required this.accent,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final SubjectAccent accent;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final sf = context.sf;
-    final scheme = context.scheme;
-    final color = accent.color(context);
-
-    return Material(
-      color: Colors.transparent,
-      borderRadius: AppRadius.brPill,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: AppRadius.brPill,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: selected ? color.withValues(alpha: 0.12) : scheme.surface,
-            borderRadius: AppRadius.brPill,
-            // Two pixels of accent rather than a fill: the chip has to stay
-            // readable in both themes, and a solid accent behind ink does not.
-            border: Border.all(
-              color: selected ? color : scheme.outline,
-              width: selected ? 2 : 1,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 16, color: selected ? color : sf.ink3),
-              const SizedBox(width: 8),
-              // Flexible, and allowed to run to two lines. A chip wide enough
-              // for "Computer Science" at text scale 1.3 is wider than the
-              // screen, and truncating to "Computer Scien…" would leave the
-              // user choosing between labels they cannot fully read.
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: AppTextStyles.fontUi,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.1,
-                    color: selected ? color : sf.ink,
-                  ),
-                ),
-              ),
-              if (selected) ...[
-                const SizedBox(width: 6),
-                Icon(Icons.check_rounded, size: 14, color: color),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
+/// The category chips are `SfSelectChip` now — the exam editor needed the same
+/// control for subjects, so it moved to core/widgets rather than being copied.

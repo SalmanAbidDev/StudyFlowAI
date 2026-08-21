@@ -11,6 +11,47 @@ final materialsProvider = FutureProvider<List<StudyMaterial>>(
   (ref) => ref.watch(libraryRepositoryProvider).materials(),
 );
 
+/// Which document the app is currently working on: set before pushing the
+/// Document, Summaries, Flashcards or Quiz screens, so none of them has to
+/// guess. Lives here rather than with Summaries — it answers a question about
+/// the *library*, and four features read it.
+final selectedMaterialProvider =
+    NotifierProvider<ValueViewModel<String?>, String?>(
+  () => ValueViewModel(null),
+);
+
+/// [selectedMaterialProvider] resolved against the library. Falls back to the
+/// most recent document when nothing has been selected, so a screen opened
+/// cold still has something to show.
+final currentMaterialProvider = FutureProvider.autoDispose<StudyMaterial?>(
+  (ref) async {
+    final selectedId = ref.watch(selectedMaterialProvider);
+    final all = await ref.watch(materialsProvider.future);
+    if (selectedId == null) return all.firstOrNull;
+    return all.where((m) => m.id == selectedId).firstOrNull;
+  },
+);
+
+/// Title and subject search, shared by every list of materials in the app.
+///
+/// A plain function rather than a provider: the Materials tab keeps its query
+/// in [materialsQueryProvider], but History and the pickers each own theirs —
+/// typing in one must not filter the others.
+List<StudyMaterial> filterMaterials(
+  List<StudyMaterial> all,
+  String rawQuery,
+) {
+  final query = rawQuery.trim().toLowerCase();
+  if (query.isEmpty) return all;
+  // Title and subject both, so "chem" finds a document by its subject even
+  // when the title never says it.
+  return all
+      .where((m) =>
+          m.title.toLowerCase().contains(query) ||
+          m.subjectName.toLowerCase().contains(query))
+      .toList();
+}
+
 /// Index into [libraryFiltersProvider]; 0 is "All".
 final materialsFilterProvider = NotifierProvider<ValueViewModel<int>, int>(
   () => ValueViewModel(0),
@@ -54,17 +95,7 @@ final visibleMaterialsProvider = Provider<List<StudyMaterial>>((ref) {
     result = result.where((m) => m.tag == tag).toList();
   }
 
-  if (query.isNotEmpty) {
-    // Title and subject both, so "chem" finds a document by its subject even
-    // when the title never says it.
-    result = result
-        .where((m) =>
-            m.title.toLowerCase().contains(query) ||
-            m.subjectName.toLowerCase().contains(query))
-        .toList();
-  }
-
-  return result;
+  return filterMaterials(result, query);
 });
 
 /// True when the list is empty *because of* a filter or query rather than

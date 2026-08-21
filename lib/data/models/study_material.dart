@@ -27,6 +27,7 @@ class StudyMaterial {
     required this.icon,
     required this.subjectName,
     required this.pageCount,
+    this.subjectId,
     this.storagePath,
     this.sourceUrl,
     this.mimeType,
@@ -44,6 +45,7 @@ class StudyMaterial {
       accent: SubjectAccentColor.parse(subject?['accent'] as String?),
       icon: iconForKey(subject?['icon'] as String?),
       subjectName: (subject?['name'] as String?) ?? 'Unfiled',
+      subjectId: row['subject_id'] as String?,
       pageCount: row['page_count'] as int?,
       storagePath: row['storage_path'] as String?,
       sourceUrl: row['source_url'] as String?,
@@ -61,6 +63,11 @@ class StudyMaterial {
   final SubjectAccent accent;
   final IconData icon;
   final String subjectName;
+
+  /// Carried so a study block built from this material can inherit its
+  /// subject, which is what colours the block's accent stripe.
+  final String? subjectId;
+
   final int? pageCount;
   final String? storagePath;
 

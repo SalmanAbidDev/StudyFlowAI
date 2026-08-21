@@ -16,6 +16,8 @@ import 'package:ai_study_helper/data/models/study_block.dart';
 import 'package:ai_study_helper/data/models/study_material.dart';
 import 'package:ai_study_helper/data/models/subject.dart';
 import 'package:ai_study_helper/data/models/summary_section.dart';
+import 'package:ai_study_helper/core/config/ai_config.dart';
+import 'package:ai_study_helper/data/repositories/ai_repository.dart';
 import 'package:ai_study_helper/data/repositories/analytics_repository.dart';
 import 'package:ai_study_helper/data/repositories/chat_repository.dart';
 import 'package:ai_study_helper/data/repositories/library_repository.dart';
@@ -43,7 +45,7 @@ StudyMaterial _material(String id, String title, String subject,
 class FakeLibraryRepository implements LibraryRepository {
   /// [empty] models a brand-new account, which is what Home's conditional
   /// sections have to be tested against.
-  FakeLibraryRepository({this.empty = false})
+  FakeLibraryRepository({this.empty = false, this.summarised = true})
       : _materials = empty
             ? []
             : [
@@ -54,6 +56,11 @@ class FakeLibraryRepository implements LibraryRepository {
               ];
 
   final bool empty;
+
+  /// False models a document nobody has summarised yet — the state the
+  /// Summarize button exists for.
+  final bool summarised;
+
   final List<StudyMaterial> _materials;
 
   /// A copy, not the backing list. The real repository builds a fresh list per
@@ -125,7 +132,10 @@ class FakeLibraryRepository implements LibraryRepository {
   }
 
   @override
-  Future<List<SummarySection>> summaryFor(String materialId) async => const [
+  Future<List<SummarySection>> summaryFor(String materialId) async =>
+      empty || !summarised
+      ? const []
+      : const [
         SummarySection(
           id: 's1',
           title: '4.1 Chirality & Stereocenters',
@@ -168,7 +178,7 @@ class FakeLibraryRepository implements LibraryRepository {
 }
 
 class FakePlannerRepository implements PlannerRepository {
-  FakePlannerRepository({this.empty = false});
+  FakePlannerRepository({this.empty = false, this.partialToday = false});
 
   final bool empty;
 
@@ -183,7 +193,7 @@ class FakePlannerRepository implements PlannerRepository {
     return {DateTime(now.year, now.month, now.day): _blocks};
   }
 
-  var _blocks = <StudyBlock>[
+  final _blocks = <StudyBlock>[
     const StudyBlock(
       id: 'b1',
       title: 'Stereochem · Read Ch 4',
@@ -193,6 +203,9 @@ class FakePlannerRepository implements PlannerRepository {
       done: false,
       startsAt: TimeOfDay(hour: 8, minute: 0),
       endsAt: TimeOfDay(hour: 9, minute: 30),
+      // Linked, because every block the editor can now build is: it is what
+      // lets a test check that tapping a row opens something.
+      materialId: 'm1',
     ),
     const StudyBlock(
       id: 'b2',
@@ -206,50 +219,289 @@ class FakePlannerRepository implements PlannerRepository {
     ),
   ];
 
-  /// Three days running, ending today, with 90 minutes on each — enough to
-  /// tell a real streak from a hard-coded one.
+  /// Three days running, ending today, **fully** completed — enough to tell a
+  /// real streak from a hard-coded one.
+  ///
+  /// [partialToday] leaves one of today's two blocks outstanding, which is the
+  /// case the streak must refuse to count: it used to count any day with a
+  /// single tick on it.
+  final bool partialToday;
+
   @override
-  Future<List<CompletedBlock>> completedBlocks() async {
+  Future<List<PlannedBlock>> blockHistory() async {
     if (empty) return const [];
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     return [
-      for (var i = 0; i < 3; i++)
-        CompletedBlock(
+      for (var i = 0; i < 3; i++) ...[
+        PlannedBlock(
           day: today.subtract(Duration(days: i)),
           minutes: 90,
+          done: true,
         ),
+        if (i == 0 && partialToday)
+          PlannedBlock(day: today, minutes: 45, done: false),
+      ],
     ];
   }
 
-  @override
-  Future<List<StudyBlock>> blocksOn(DateTime day) async => empty ? [] : _blocks;
+  /// Blocks keyed by day, so a test can plan on one date and check another is
+  /// untouched — which is the whole point of a scrolling strip.
+  late final Map<DateTime, List<StudyBlock>> _byDay = empty
+      ? {}
+      : {_key(DateTime.now()): _blocks};
+
+  static DateTime _key(DateTime day) =>
+      DateTime(day.year, day.month, day.day);
 
   @override
-  Future<void> saveOrder(List<StudyBlock> blocks) async => _blocks = blocks;
+  Future<List<StudyBlock>> blocksOn(DateTime day) async =>
+      List.of(_byDay[_key(day)] ?? const []);
 
   @override
-  Future<void> setBlockDone(String blockId, {required bool done}) async {}
+  Future<Map<DateTime, int>> blockCountsBetween(
+    DateTime from,
+    DateTime to,
+  ) async =>
+      {
+        for (final entry in _byDay.entries)
+          if (!entry.key.isBefore(_key(from)) && !entry.key.isAfter(_key(to)))
+            if (entry.value.isNotEmpty) entry.key: entry.value.length,
+      };
+
+  @override
+  Future<void> saveOrder(List<StudyBlock> blocks) async {
+    if (blocks.isEmpty) return;
+    for (final entry in _byDay.entries) {
+      if (entry.value.any((b) => b.id == blocks.first.id)) {
+        _byDay[entry.key] = List.of(blocks);
+        return;
+      }
+    }
+  }
+
+  @override
+  Future<void> setBlockDone(String blockId, {required bool done}) async {
+    for (final entry in _byDay.entries) {
+      final i = entry.value.indexWhere((b) => b.id == blockId);
+      if (i == -1) continue;
+      final b = entry.value[i];
+      entry.value[i] = StudyBlock(
+        id: b.id,
+        title: b.title,
+        accent: b.accent,
+        icon: b.icon,
+        position: b.position,
+        done: done,
+        startsAt: b.startsAt,
+        endsAt: b.endsAt,
+        materialId: b.materialId,
+        examId: b.examId,
+        subjectId: b.subjectId,
+      );
+      return;
+    }
+  }
+
+  var _nextBlockId = 100;
 
   @override
   Future<void> createBlock({
     required String userId,
     required String title,
     required DateTime day,
+    TimeOfDay? startsAt,
+    int minutes = 0,
     String? subjectId,
+    String? materialId,
+    String? examId,
     int position = 0,
-  }) async {}
+  }) async {
+    (_byDay[_key(day)] ??= []).add(StudyBlock(
+      id: 'nb${_nextBlockId++}',
+      title: title,
+      accent: SubjectAccent.indigo,
+      icon: Icons.book_outlined,
+      position: position,
+      done: false,
+      startsAt: startsAt,
+      endsAt: _end(startsAt, minutes),
+      materialId: materialId,
+      examId: examId,
+      subjectId: subjectId,
+    ));
+  }
+
+  /// Mirrors the repository: the end time is computed from the length rather
+  /// than picked, so a test sees the same window the app would store.
+  static TimeOfDay? _end(TimeOfDay? start, int minutes) {
+    if (start == null || minutes <= 0) return null;
+    final total = start.hour * 60 + start.minute + minutes;
+    if (total >= 24 * 60) return const TimeOfDay(hour: 23, minute: 59);
+    return TimeOfDay(hour: total ~/ 60, minute: total % 60);
+  }
 
   @override
-  Future<List<Exam>> upcomingExams() async => empty ? [] : [
-        Exam(
-          id: 'e1',
-          title: 'Organic Chem Final',
-          examDate: DateTime.now().add(const Duration(days: 9)),
-          preparation: 0.62,
-          accent: SubjectAccent.coral,
-        ),
-      ];
+  Future<void> updateBlock({
+    required String blockId,
+    required String title,
+    required DateTime day,
+    TimeOfDay? startsAt,
+    int minutes = 0,
+    String? subjectId,
+    String? materialId,
+    String? examId,
+  }) async {
+    for (final entry in _byDay.entries) {
+      final i = entry.value.indexWhere((b) => b.id == blockId);
+      if (i == -1) continue;
+      final b = entry.value[i];
+      entry.value[i] = StudyBlock(
+        id: b.id,
+        title: title,
+        accent: b.accent,
+        icon: b.icon,
+        position: b.position,
+        done: b.done,
+        startsAt: startsAt,
+        endsAt: _end(startsAt, minutes),
+        materialId: materialId,
+        examId: examId,
+        subjectId: subjectId,
+      );
+      return;
+    }
+  }
+
+  @override
+  Future<void> deleteBlock(String blockId) async {
+    for (final blocks in _byDay.values) {
+      blocks.removeWhere((b) => b.id == blockId);
+    }
+  }
+
+  @override
+  Future<void> copyDay({
+    required String userId,
+    required List<StudyBlock> blocks,
+    required List<DateTime> targets,
+  }) async {
+    for (final day in targets) {
+      for (var i = 0; i < blocks.length; i++) {
+        final b = blocks[i];
+        (_byDay[_key(day)] ??= []).add(StudyBlock(
+          id: 'nb${_nextBlockId++}',
+          title: b.title,
+          accent: b.accent,
+          icon: b.icon,
+          position: i,
+          // Never copied: a plan for next Tuesday that arrives already ticked
+          // would claim work nobody has done.
+          done: false,
+          startsAt: b.startsAt,
+          endsAt: b.endsAt,
+          materialId: b.materialId,
+          examId: b.examId,
+          subjectId: b.subjectId,
+        ));
+      }
+    }
+  }
+
+  /// Mutable so a test can add, edit, attach and delete against it and see the
+  /// result — the whole point of the exam editor.
+  late final List<Exam> _exams = empty
+      ? []
+      : [
+          Exam(
+            id: 'e1',
+            title: 'Organic Chem Final',
+            examDate: DateTime.now().add(const Duration(days: 9)),
+            examTime: const TimeOfDay(hour: 9, minute: 0),
+            priority: ExamPriority.high,
+            accent: SubjectAccent.coral,
+            // Deliberately none: "no materials added" is the state an exam
+            // starts in, and the one the screens have to describe honestly.
+            materialIds: const [],
+          ),
+        ];
+
+  @override
+  Future<List<Exam>> upcomingExams() async => List.of(_exams);
+
+  var _nextId = 2;
+
+  @override
+  Future<String> createExam({
+    required String userId,
+    required String title,
+    required DateTime examDate,
+    TimeOfDay? examTime,
+    ExamPriority priority = ExamPriority.normal,
+    String? subjectId,
+  }) async {
+    final id = 'e${_nextId++}';
+    _exams.add(Exam(
+      id: id,
+      title: title,
+      examDate: examDate,
+      examTime: examTime,
+      priority: priority,
+      accent: SubjectAccent.indigo,
+      subjectId: subjectId,
+    ));
+    // Soonest first, the way the real query orders them.
+    _exams.sort((a, b) => a.examDate.compareTo(b.examDate));
+    return id;
+  }
+
+  @override
+  Future<void> updateExam({
+    required String examId,
+    required String title,
+    required DateTime examDate,
+    TimeOfDay? examTime,
+    ExamPriority priority = ExamPriority.normal,
+    String? subjectId,
+  }) async {
+    final i = _exams.indexWhere((e) => e.id == examId);
+    if (i == -1) return;
+    _exams[i] = Exam(
+      id: examId,
+      title: title,
+      examDate: examDate,
+      examTime: examTime,
+      priority: priority,
+      accent: _exams[i].accent,
+      subjectId: subjectId,
+      materialIds: _exams[i].materialIds,
+    );
+  }
+
+  @override
+  Future<void> deleteExam(String examId) async =>
+      _exams.removeWhere((e) => e.id == examId);
+
+  @override
+  Future<void> setExamMaterials({
+    required String examId,
+    required String userId,
+    required List<String> materialIds,
+  }) async {
+    final i = _exams.indexWhere((e) => e.id == examId);
+    if (i == -1) return;
+    final exam = _exams[i];
+    _exams[i] = Exam(
+      id: exam.id,
+      title: exam.title,
+      examDate: exam.examDate,
+      examTime: exam.examTime,
+      priority: exam.priority,
+      accent: exam.accent,
+      subjectId: exam.subjectId,
+      materialIds: List.of(materialIds),
+    );
+  }
 }
 
 class FakeStudyRepository implements StudyRepository {
@@ -288,6 +540,27 @@ class FakeStudyRepository implements StudyRepository {
           ),
         ],
       );
+
+  /// Only `m1` has anything generated for it. That is the realistic shape —
+  /// most documents have no deck and no quiz until a model builds them — and
+  /// it lets a test walk both branches of the picker.
+  @override
+  Future<Deck?> deckForMaterial(String materialId) async =>
+      materialId == 'm1' ? firstDeck() : null;
+
+  @override
+  Future<Quiz?> quizForMaterial(String materialId) async =>
+      materialId == 'm1' ? firstQuiz() : null;
+
+  /// Practice done against practice generated. `m1` is half finished — enough
+  /// for a task's progress bar to show something other than 0% or 100%.
+  var progress = <String, ({int done, int total})>{
+    'm1': (done: 4, total: 8),
+  };
+
+  @override
+  Future<Map<String, ({int done, int total})>> progressByMaterial() async =>
+      empty ? {} : Map.of(progress);
 
   @override
   Future<void> reviewCard(
@@ -399,14 +672,103 @@ class FakeAnalyticsRepository implements AnalyticsRepository {
   }) async {}
 }
 
+/// Stands in for the Edge Function. No network, no key, no Gemini — the point
+/// of the seam is that the app can be tested without any of them.
+class FakeAiRepository implements AiRepository {
+  FakeAiRepository({
+    this.used = 0,
+    this.failure,
+    this.limit = AiConfig.dailyChatLimit,
+  });
+
+  /// Raisable, so a layout test can build a transcript longer than a real
+  /// day's allowance without the composer shutting off half way.
+  final int limit;
+
+  /// How many of today's questions are already gone.
+  int used;
+
+  /// Set to make the next call fail, which is how the limit and the error
+  /// paths are exercised.
+  AiException? failure;
+
+  /// Every question asked, so a test can prove the held document and the
+  /// transcript were actually handed over rather than merely displayed.
+  final asked = <({String question, String? materialId, int historyLength})>[];
+
+  /// Materials that had content generated for them.
+  final generated = <String>[];
+
+  @override
+  Future<({String answer, AiUsage usage})> ask({
+    required String question,
+    String? materialId,
+    List<({String role, String text})> history = const [],
+  }) async {
+    if (failure != null) throw failure!;
+    asked.add((
+      question: question,
+      materialId: materialId,
+      historyLength: history.length,
+    ));
+    used++;
+    return (
+      answer: 'Answer about ${materialId ?? 'nothing in particular'}.',
+      usage: AiUsage(used: used, limit: limit),
+    );
+  }
+
+  @override
+  Future<AiUsage> usage() async => AiUsage(used: used, limit: limit);
+
+  @override
+  Future<String> generateDeck({
+    required String userId,
+    required String materialId,
+    required String title,
+    String? subjectId,
+  }) async {
+    if (failure != null) throw failure!;
+    generated.add(materialId);
+    return 'deck-$materialId';
+  }
+
+  @override
+  Future<void> generateSummary({
+    required String userId,
+    required String materialId,
+  }) async {
+    if (failure != null) throw failure!;
+    generated.add(materialId);
+  }
+
+  @override
+  Future<String> generateQuiz({
+    required String userId,
+    required String materialId,
+    required String title,
+  }) async {
+    if (failure != null) throw failure!;
+    generated.add(materialId);
+    return 'quiz-$materialId';
+  }
+}
+
 class FakeChatRepository implements ChatRepository {
-  var _messages = <ChatMessage>[...openingTranscript];
+  /// Transcripts keyed by thread id — **one per document**, which is the whole
+  /// point of the real `currentThreadId`. A single shared list would let a
+  /// test pass while the app leaked one document's conversation into another.
+  /// Every thread starts empty, as a real one does.
+  final _byThread = <String, List<ChatMessage>>{};
+
+  /// The thread id for a document, or `general` when none is held.
+  @override
+  Future<String> currentThreadId(String userId, {String? materialId}) async =>
+      materialId == null ? 'general' : 'thread-$materialId';
 
   @override
-  Future<String> currentThreadId(String userId) async => 't1';
-
-  @override
-  Future<List<ChatMessage>> messages(String threadId) async => _messages;
+  Future<List<ChatMessage>> messages(String threadId) async =>
+      List.of(_byThread[threadId] ?? const []);
 
   @override
   Future<void> append({
@@ -414,11 +776,7 @@ class FakeChatRepository implements ChatRepository {
     required String userId,
     required ChatMessage message,
   }) async =>
-      _messages = [..._messages, message];
-
-  @override
-  Future<void> reset(String threadId, String userId) async =>
-      _messages = [...openingTranscript];
+      (_byThread[threadId] ??= []).add(message);
 }
 
 class FakeStorageRepository implements StorageRepository {
