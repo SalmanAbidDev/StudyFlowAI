@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ai_study_helper/app/app.dart';
 import 'package:ai_study_helper/app/theme_mode_view_model.dart';
 import 'package:ai_study_helper/core/config/ai_config.dart';
+import 'package:ai_study_helper/core/startup_failure_app.dart';
 import 'package:ai_study_helper/core/theme/theme.dart';
 import 'package:ai_study_helper/data/repositories/ai_repository.dart';
 import 'package:ai_study_helper/data/supabase_providers.dart';
@@ -1666,6 +1667,22 @@ void main() {
 
     expect(find.byType(ExamsScreen), findsOneWidget);
     expect(find.byType(ChatScreen), findsNothing);
+  });
+
+  // A build with no credentials used to draw no frame at all, leaving Android
+  // showing the launcher icon forever — twice diagnosed by pulling libapp.so
+  // out of the APK. Now something renders and says what to do.
+  testWidgets('a startup failure renders instead of hanging', (tester) async {
+    _usePhoneSurface(tester);
+    await tester.pumpWidget(const StartupFailureApp(
+      title: 'Supabase is not configured',
+      detail: 'This build was compiled without the project URL.',
+      fix: 'flutter build apk --release --dart-define-from-file=…',
+    ));
+    await _settle(tester);
+
+    expect(find.text('Supabase is not configured'), findsOneWidget);
+    expect(find.textContaining('--dart-define-from-file'), findsOneWidget);
   });
 
   // ── Phase: the AI ───────────────────────────────────────────────────────
